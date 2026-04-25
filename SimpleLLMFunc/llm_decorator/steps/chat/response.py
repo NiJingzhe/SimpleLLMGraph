@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncGenerator, Dict, List, Literal, Tuple
+from typing import Any, AsyncGenerator, Literal, Tuple
 
 from SimpleLLMFunc.base.post_process import (
     extract_content_from_response,
@@ -11,7 +11,7 @@ from SimpleLLMFunc.base.post_process import (
 )
 from SimpleLLMFunc.logger import app_log
 from SimpleLLMFunc.logger.logger import get_location
-from SimpleLLMFunc.type import HistoryList, MessageList
+from SimpleLLMFunc.type import MessageList
 
 
 def extract_stream_response_content(chunk: Any, func_name: str) -> str:
@@ -71,4 +71,3 @@ async def process_chat_response_stream(
     # 流结束标记（text 模式）
     if return_mode == "text":
         yield "", current_messages.copy()
-

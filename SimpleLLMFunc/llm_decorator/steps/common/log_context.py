@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from contextlib import asynccontextmanager
 from typing import Any, AsyncContextManager, Dict, AsyncGenerator, Optional
+from typing import cast
+from langfuse.types import TraceContext
 
 from SimpleLLMFunc.observability.langfuse_client import (
     get_langfuse_trace_context,
@@ -45,7 +47,10 @@ async def _log_context_manager(
     trace_context = get_langfuse_trace_context()
     trace_token: Optional[object] = None
     if trace_context is None:
-        trace_context = {"trace_id": langfuse_client.create_trace_id()}
+        trace_context = cast(
+            TraceContext,
+            {"trace_id": langfuse_client.create_trace_id()},
+        )
         trace_token = set_langfuse_trace_context(trace_context)
 
     async with base_manager:

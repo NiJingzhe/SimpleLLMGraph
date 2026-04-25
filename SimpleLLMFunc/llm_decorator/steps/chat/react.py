@@ -22,7 +22,6 @@ from SimpleLLMFunc.tool import Tool
 from SimpleLLMFunc.llm_decorator.utils import process_tools
 from SimpleLLMFunc.type import MessageList, ToolDefinitionList
 from SimpleLLMFunc.hooks.stream import ReactOutput, responses_only
-from SimpleLLMFunc.logger.logger import get_current_context_attribute
 from SimpleLLMFunc.logger.context_manager import get_current_trace_id
 
 
@@ -70,7 +69,6 @@ async def execute_llm_call(
     The core always emits `ReactOutput`. Legacy tuple output is derived here
     for callers that still request non-event behavior.
     """
-    func_name = get_current_context_attribute("function_name") or "Unknown Function"
     current_trace_id = trace_id or get_current_trace_id() or ""
 
     react_stream = ReAct_loop(

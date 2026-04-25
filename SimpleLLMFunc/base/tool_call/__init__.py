@@ -32,6 +32,7 @@ from SimpleLLMFunc.base.tool_call.validation import (
 __all__ = [
     "serialize_tool_output_for_langfuse",
     "is_valid_tool_result",
+    "_execute_single_tool_call",
     "process_tool_calls",
     "extract_tool_calls",
     "accumulate_tool_calls_from_chunks",

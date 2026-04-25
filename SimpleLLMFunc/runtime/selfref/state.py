@@ -18,6 +18,7 @@ from SimpleLLMFunc.base.messages import (
     validate_tool_linkage,
 )
 from SimpleLLMFunc.base.react_hooks import ReActHookExecutionContext
+from SimpleLLMFunc.type.message import NormalizedMessageList, NormalizedMessageParam
 from SimpleLLMFunc.runtime.primitives import RuntimePrimitiveBackend
 from SimpleLLMFunc.runtime.selfref.context_ops import (
     build_context_messages_from_state_data as _context_ops_build_context_messages_from_state_data,
@@ -26,7 +27,6 @@ from SimpleLLMFunc.runtime.selfref.context_ops import (
     extract_latest_system_prompt as _context_ops_extract_latest_system_prompt,
     normalize_context_summary_payload as _context_ops_normalize_context_summary_payload,
     normalize_experience_text as _context_ops_normalize_experience_text,
-    parse_context_compaction_summary,
     parse_context_messages as _context_ops_parse_context_messages,
     remove_framework_injected_prompt_blocks as _context_ops_remove_framework_injected_prompt_blocks,
     render_context_compaction_summary,
@@ -144,9 +144,9 @@ def _validate_history_for_memory_methods(messages: MemoryHistory) -> None:
     for index, message in enumerate(messages):
         if not isinstance(message, dict):
             raise ValueError(f"history item at index {index} must be a dict")
-        validate_message_shape(message, index)
+        validate_message_shape(cast(NormalizedMessageParam, message), index)
 
-    validate_tool_linkage(messages)
+    validate_tool_linkage(cast(NormalizedMessageList, messages))
 
 
 def _coerce_history_list(history: List[Any]) -> MemoryHistory:
@@ -830,14 +830,14 @@ class SelfReference(RuntimePrimitiveBackend):
         normalized_key = _normalize_key(key)
         active_state = self._get_active_react_state()
         if active_state is not None and self._get_active_memory_key() == normalized_key:
-            return active_state.messages
+            return _coerce_history_list(cast(List[Any], active_state.messages))
 
         with self._lock:
             mapped_state = self._active_react_states_by_key.get(normalized_key)
         if mapped_state is None:
             return None
 
-        return mapped_state.messages
+        return _coerce_history_list(cast(List[Any], mapped_state.messages))
 
     def mark_destructive_history_mutation(self, key: str) -> None:
         normalized_key = _normalize_key(key)
@@ -928,14 +928,14 @@ class SelfReference(RuntimePrimitiveBackend):
         for index, message in enumerate(normalized_messages):
             if not isinstance(message, dict):
                 raise ValueError(f"context message at index {index} must be a dict")
-            validate_message_shape(message, index)
+            validate_message_shape(cast(NormalizedMessageParam, message), index)
 
         working_messages = cast(
             MemoryHistory,
             _parse_context_messages(normalized_messages)["working_messages"],
         )
         if validate_working_linkage:
-            validate_tool_linkage(working_messages)
+            validate_tool_linkage(cast(NormalizedMessageList, working_messages))
         return _canonicalize_context_messages(normalized_messages)
 
     def snapshot_context_messages(self, key: str) -> MemoryHistory:

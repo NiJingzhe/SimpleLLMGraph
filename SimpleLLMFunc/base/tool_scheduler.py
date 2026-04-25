@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import dataclass, field
 import json
 import time
-from typing import Any, Awaitable, Callable, Dict, List, Optional, cast
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, cast
 
 from SimpleLLMFunc.base.mutation import ContextMutation, ToolCancelledMutation, ToolResultMutation, UserMessageMutation
 from SimpleLLMFunc.base.tool_call.execution import _execute_single_tool_call
@@ -26,6 +26,7 @@ from SimpleLLMFunc.hooks.events import (
 from SimpleLLMFunc.hooks.stream import EventYield
 from SimpleLLMFunc.observability.langfuse_client import get_langfuse_trace_context
 from SimpleLLMFunc.type.hooks import ToolResult
+from SimpleLLMFunc.type.message import NormalizedMessageList
 from SimpleLLMFunc.type.tool_call import ToolCall, dict_to_tool_call
 
 
@@ -39,7 +40,7 @@ class ToolSchedulerResult:
 async def schedule_tool_batch(
     *,
     tool_calls: List[Dict[str, Any]],
-    messages: List[Dict[str, Any]],
+    messages: NormalizedMessageList,
     tool_map: Dict[str, Callable[..., Awaitable[Any]]],
     trace_id: str,
     func_name: str,
@@ -258,7 +259,12 @@ async def schedule_tool_batch(
             )
             return
         abort_task.cancel()
-        task_outputs = await gather_future
+        gathered = await gather_future
+        task_outputs = [
+            item
+            for item in gathered
+            if not isinstance(item, BaseException)
+        ]
     else:
         task_outputs = await asyncio.gather(*tasks)
 

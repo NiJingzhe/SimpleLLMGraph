@@ -95,6 +95,10 @@ async def _default_emit_event(event: Any, **_: Any) -> EventYield:
     return EventYield(event=event)
 
 
+async def _await_next_chunk(stream_iter: Any) -> Any:
+    return await stream_iter.__anext__()
+
+
 async def execute_single_llm_phase(
     *,
     llm_interface: LLM_Interface,
@@ -187,7 +191,7 @@ async def execute_single_llm_phase(
                     chunk = await stream_iter.__anext__()
                 else:
                     abort_task = asyncio.create_task(abort_signal.wait())
-                    next_task = asyncio.create_task(stream_iter.__anext__())
+                    next_task = asyncio.create_task(_await_next_chunk(stream_iter))
                     done, _ = await asyncio.wait(
                         {abort_task, next_task},
                         return_when=asyncio.FIRST_COMPLETED,

@@ -16,12 +16,10 @@ from typing import Any, AsyncGenerator, Dict, Optional
 from SimpleLLMFunc.base.llm_call import execute_single_llm_phase
 from SimpleLLMFunc.base.react_loop import run_react_loop
 from SimpleLLMFunc.hooks.abort import AbortSignal
-from SimpleLLMFunc.hooks.events import LLMCallEndEvent
 from SimpleLLMFunc.hooks.stream import EventYield, ReactOutput
 from SimpleLLMFunc.interface.llm_interface import LLM_Interface
 from SimpleLLMFunc.logger.context_manager import get_current_trace_id
 from SimpleLLMFunc.logger.logger import get_current_context_attribute
-from SimpleLLMFunc.observability.langfuse_client import langfuse_client
 from SimpleLLMFunc.type import MessageList, ToolDefinitionList
 
 

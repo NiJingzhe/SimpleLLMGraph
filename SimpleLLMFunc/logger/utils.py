@@ -7,7 +7,7 @@
 import inspect
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 
 def convert_float_to_datetime_with_tz(

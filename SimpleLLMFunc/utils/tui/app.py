@@ -439,7 +439,7 @@ class AgentTUIApp(App[None]):
 
         return (not model.finished) or bool(model.running_tool_call_ids)
 
-    def _compose_tool_plain_text(self, tool: _ToolWidgets) -> str:
+    def _compose_tool_plain_text(self, tool: ToolCallCard) -> str:
         lines: list[str] = [f"Tool: {tool.tool_name}", f"Status: {tool.status}"]
 
         if tool.arguments:

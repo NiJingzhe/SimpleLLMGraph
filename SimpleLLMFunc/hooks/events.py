@@ -55,7 +55,7 @@ class ReActEventType(str, Enum):
 # ============================================================================
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ReActEvent:
     """ReAct 事件基类
 
@@ -70,21 +70,7 @@ class ReActEvent:
     trace_id: str  # 追踪 ID
     func_name: str  # 函数名称
     iteration: int  # 当前迭代次数（从 0 开始，0 表示初始调用）
-
-    # 扩展信息（使用 __init_subclass__ 动态添加，避免字段顺序问题）
-    def __init_subclass__(cls, **kwargs):
-        """动态添加 extra 字段到所有子类"""
-        super().__init_subclass__(**kwargs)
-        # 在子类中添加 extra 字段，使用 field(default_factory=dict)
-        if "extra" not in cls.__annotations__:
-            cls.__annotations__["extra"] = Dict[str, Any]
-            # 使用 dataclasses.field 来设置默认值
-            setattr(cls, "extra", field(default_factory=dict))
-
-    def __post_init__(self):
-        """初始化后处理，确保 extra 存在"""
-        if not hasattr(self, "extra") or getattr(self, "extra", None) is None:
-            object.__setattr__(self, "extra", {})
+    extra: Dict[str, Any] = field(default_factory=dict, kw_only=True)
 
 
 # ============================================================================

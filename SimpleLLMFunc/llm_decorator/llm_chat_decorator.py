@@ -10,6 +10,7 @@ from typing import (
     List,
     Optional,
     ParamSpec,
+    Sequence,
     Tuple,
     TypeVar,
     Union,
@@ -37,12 +38,13 @@ from SimpleLLMFunc.llm_decorator.utils import (
 )
 from SimpleLLMFunc.interface.llm_interface import LLM_Interface
 from SimpleLLMFunc.runtime.selfref.state import (
+    MemoryHistory,
     SELF_REFERENCE_KEY_OVERRIDE_TEMPLATE_PARAM,
     SELF_REFERENCE_TOOLKIT_OVERRIDE_TEMPLATE_PARAM,
     SelfReference,
 )
 from SimpleLLMFunc.tool import Tool
-from SimpleLLMFunc.type import HistoryList, MessageList
+from SimpleLLMFunc.type import HistoryList, MessageList, NormalizedMessageParam
 from SimpleLLMFunc.hooks.events import ReactEndEvent
 from SimpleLLMFunc.hooks.stream import ReactOutput, is_event_yield
 from SimpleLLMFunc.hooks.abort import AbortSignal, ABORT_SIGNAL_PARAM
@@ -75,7 +77,7 @@ _AGENT_FORK_TOOLKIT_FACTORY_ATTR = "__simplellmfunc_fork_toolkit_factory__"
 _FORK_CLONED_PYREPL_ATTR = "__simplellmfunc_fork_cloned_pyrepl__"
 
 
-def _extract_raw_history_reference(arguments: dict[str, Any]) -> Optional[HistoryList]:
+def _extract_raw_history_reference(arguments: dict[str, Any]) -> Optional[MemoryHistory]:
     """Extract the original history list object from bound call arguments."""
 
     for history_param_name in HISTORY_PARAM_NAMES:
@@ -89,7 +91,7 @@ def _extract_raw_history_reference(arguments: dict[str, Any]) -> Optional[Histor
         if isinstance(history, list) and all(
             isinstance(item, dict) for item in history
         ):
-            return cast(HistoryList, history)
+            return cast(MemoryHistory, history)
 
         return None
 
@@ -98,13 +100,13 @@ def _extract_raw_history_reference(arguments: dict[str, Any]) -> Optional[Histor
 
 def _set_history_argument(
     arguments: dict[str, Any],
-    history: HistoryList,
+    history: MemoryHistory,
 ) -> bool:
     """Inject a history snapshot into bound arguments when history param exists."""
 
     for history_param_name in HISTORY_PARAM_NAMES:
         if history_param_name in arguments:
-            arguments[history_param_name] = history
+            arguments[history_param_name] = list(history)
             return True
     return False
 
@@ -342,7 +344,7 @@ def _append_must_principles_prompt_to_messages(messages: MessageList) -> None:
         else:
             merged_prompt = prompt_block
 
-        messages[index] = {**message, "content": merged_prompt}
+        messages[index] = cast(MessageList, [cast(NormalizedMessageParam, {**message, "content": merged_prompt})])[0]
         return
 
     messages.insert(0, {"role": "system", "content": prompt_block})
@@ -378,10 +380,10 @@ def _seed_self_reference_system_prompt_if_missing(
     cleaned_system_prompt = _remove_injected_prompt_blocks(system_prompt)
     system_prompt_for_store = cleaned_system_prompt or system_prompt
 
-    current_history = self_reference.snapshot_history(memory_key)
-    seeded_history: List[Dict[str, Any]] = [
+    current_history: MemoryHistory = self_reference.snapshot_history(memory_key)
+    seeded_history: MemoryHistory = [
         {"role": "system", "content": system_prompt_for_store},
-        *cast(List[Dict[str, Any]], current_history),
+        *current_history,
     ]
     self_reference.replace_history(
         key=memory_key,
@@ -578,7 +580,6 @@ def llm_chat(
                 )
 
         signature_meta = inspect.signature(func)
-        docstring = func.__doc__ or ""
         func_name = func.__name__
 
         resolved_default_self_reference_key: Optional[str] = None
@@ -820,17 +821,14 @@ def llm_chat(
                                                 effective_self_reference._get_active_react_state()
                                                 is not None
                                             ):
-                                                active_history = effective_self_reference.snapshot_context_messages(
+                                                active_history: MemoryHistory = effective_self_reference.snapshot_context_messages(
                                                     resolved_self_reference_key
                                                 )
                                             else:
                                                 active_history = effective_self_reference.merge_turn_history(
                                                     key=resolved_self_reference_key,
                                                     baseline_history_count=baseline_history_count,
-                                                    updated_history=cast(
-                                                        List[Dict[str, Any]],
-                                                        output.event.final_messages,
-                                                    ),
+                                                    updated_history=cast(MemoryHistory, output.event.final_messages),
                                                     commit=True,
                                                 )
                                                 compacted_history = effective_self_reference.commit_pending_compaction(
@@ -841,11 +839,9 @@ def llm_chat(
                                                     active_history[:] = (
                                                         compacted_history
                                                     )
-                                            output.event.final_messages = active_history
+                                            output.event.final_messages = cast(HistoryList, cast(List[NormalizedMessageParam], active_history))
                                             if raw_history_reference is not None:
-                                                raw_history_reference[:] = (
-                                                    active_history
-                                                )
+                                                raw_history_reference[:] = cast(List[Dict[str, Any]], active_history)
 
                                         yield output
                                 else:
@@ -855,10 +851,7 @@ def llm_chat(
                                         AsyncGenerator[Tuple[Any, MessageList], None],
                                         response_stream,
                                     )
-                                    latest_merged_history: Optional[HistoryList] = None
-                                    last_emitted_pair: Optional[
-                                        Tuple[Any, MessageList]
-                                    ] = None
+                                    latest_merged_history: Optional[MemoryHistory] = None
                                     async for (
                                         content,
                                         history,
@@ -869,7 +862,7 @@ def llm_chat(
                                         func_name=function_signature.func_name,
                                         stream=stream,
                                     ):
-                                        history_to_yield: MessageList = history
+                                        history_to_yield: HistoryList = cast(HistoryList, history)
                                         if (
                                             effective_self_reference is not None
                                             and resolved_self_reference_key is not None
@@ -885,18 +878,14 @@ def llm_chat(
                                                 active_history = effective_self_reference.merge_turn_history(
                                                     key=resolved_self_reference_key,
                                                     baseline_history_count=baseline_history_count,
-                                                    updated_history=cast(
-                                                        List[Dict[str, Any]],
-                                                        history,
-                                                    ),
+                                                    updated_history=cast(MemoryHistory, history),
                                                     commit=False,
                                                 )
-                                            history_to_yield = active_history
+                                            history_to_yield = cast(HistoryList, cast(List[NormalizedMessageParam], active_history))
                                             latest_merged_history = active_history
 
                                         collected_responses.append(content)
                                         final_history = history_to_yield
-                                        last_emitted_pair = (content, history_to_yield)
                                         yield content, history_to_yield
 
                                     if (
@@ -909,20 +898,15 @@ def llm_chat(
                                             latest_merged_history,
                                         )
                                         if compacted_history is not None:
-                                            latest_merged_history[:] = compacted_history
+                                            latest_merged_history[:] = cast(List[Dict[str, Any]], compacted_history)
                                         else:
                                             effective_self_reference.set_context_messages(
                                                 key=resolved_self_reference_key,
-                                                messages=cast(
-                                                    List[Dict[str, Any]],
-                                                    latest_merged_history,
-                                                ),
+                                                messages=cast(MemoryHistory, latest_merged_history),
                                             )
                                         if raw_history_reference is not None:
-                                            raw_history_reference[:] = (
-                                                latest_merged_history
-                                            )
-                                        final_history = latest_merged_history
+                                            raw_history_reference[:] = cast(List[Dict[str, Any]], latest_merged_history)
+                                        final_history = cast(HistoryList, cast(List[NormalizedMessageParam], latest_merged_history))
 
                                 # 更新 Langfuse span（仅在非事件模式或收集到响应时）
                                 if not enable_event or collected_responses:

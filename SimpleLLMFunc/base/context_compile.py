@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import copy
-import json
-from typing import Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, cast
 
 from SimpleLLMFunc.base.messages.assistant import (
     build_assistant_response_message,
@@ -24,27 +23,27 @@ from SimpleLLMFunc.base.mutation import (
     ToolResultMutation,
     UserMessageMutation,
 )
-from SimpleLLMFunc.type.message import MessageList
+from SimpleLLMFunc.type.message import NormalizedMessageList, NormalizedMessageParam
 
 
 @dataclass
 class ContextState:
-    messages: MessageList
+    messages: NormalizedMessageList
     pending_mutations: List[ContextMutation] = field(default_factory=list)
 
 
 @dataclass
 class CompiledContext:
-    llm_messages: MessageList
-    semantic_messages: MessageList
+    llm_messages: NormalizedMessageList
+    semantic_messages: NormalizedMessageList
 
 
-def clone_messages(messages: MessageList) -> MessageList:
+def clone_messages(messages: NormalizedMessageList) -> NormalizedMessageList:
     return [copy.deepcopy(message) for message in messages]
 
 
 def assistant_tool_calls_are_resolved(
-    messages: MessageList,
+    messages: NormalizedMessageList,
     start_index: int,
     tool_call_ids: List[str],
 ) -> bool:
@@ -65,8 +64,8 @@ def assistant_tool_calls_are_resolved(
     return not pending
 
 
-def compile_semantic_messages(messages: MessageList) -> MessageList:
-    compiled: MessageList = []
+def compile_semantic_messages(messages: NormalizedMessageList) -> NormalizedMessageList:
+    compiled: NormalizedMessageList = []
     for index, message in enumerate(messages):
         if not isinstance(message, dict):
             compiled.append(copy.deepcopy(message))
@@ -93,14 +92,11 @@ def compile_semantic_messages(messages: MessageList) -> MessageList:
     return compiled
 
 
-def _append_tool_cancelled_mutation(
-    messages: MessageList,
+def _build_cancelled_assistant_tool_message(
     mutation: ToolCancelledMutation,
-) -> None:
-    reason_suffix = (
-        f" Reason: {mutation.abort_reason}" if mutation.abort_reason else ""
-    )
-    messages.append(
+) -> NormalizedMessageParam:
+    return cast(
+        NormalizedMessageParam,
         {
             "role": "assistant",
             "content": None,
@@ -114,22 +110,45 @@ def _append_tool_cancelled_mutation(
                     },
                 }
             ],
-        }
+        },
     )
-    messages.append(
+
+
+def _build_tool_result_message(
+    tool_call_id: str,
+    content: str,
+) -> NormalizedMessageParam:
+    return cast(
+        NormalizedMessageParam,
         {
             "role": "tool",
-            "tool_call_id": mutation.tool_call_id,
-            "content": (
+            "tool_call_id": tool_call_id,
+            "content": content,
+        },
+    )
+
+
+def _append_tool_cancelled_mutation(
+    messages: NormalizedMessageList,
+    mutation: ToolCancelledMutation,
+) -> None:
+    reason_suffix = (
+        f" Reason: {mutation.abort_reason}" if mutation.abort_reason else ""
+    )
+    messages.append(_build_cancelled_assistant_tool_message(mutation))
+    messages.append(
+        _build_tool_result_message(
+            mutation.tool_call_id,
+            (
                 "<Tool execution cancelled by user."
                 f" Tool: {mutation.tool_name}.{reason_suffix}>"
             ),
-        }
+        )
     )
 
 
 def _append_assistant_truncated_mutation(
-    messages: MessageList,
+    messages: NormalizedMessageList,
     mutation: AssistantTruncatedMutation,
 ) -> None:
     reason_suffix = (
@@ -144,9 +163,9 @@ def _append_assistant_truncated_mutation(
 
 
 def apply_mutations(
-    messages: MessageList,
+    messages: NormalizedMessageList,
     mutations: List[ContextMutation],
-) -> MessageList:
+) -> NormalizedMessageList:
     current = clone_messages(messages)
     pending_experience_remembers: List[str] = []
     pending_experience_forgets: List[str] = []
@@ -197,7 +216,7 @@ def apply_mutations(
     for mutation in mutations:
         if isinstance(mutation, ContextReplaceMutation):
             _apply_pending_experience_mutations()
-            current = clone_messages(mutation.messages)
+            current = clone_messages(cast(NormalizedMessageList, mutation.messages))
             continue
         if isinstance(mutation, ContextSummaryMutation):
             _apply_pending_experience_mutations()
@@ -207,7 +226,7 @@ def apply_mutations(
             current = []
             if base_system is not None:
                 current.append(base_system)
-            current.append(copy.deepcopy(mutation.summary_message))
+            current.append(copy.deepcopy(cast(NormalizedMessageParam, mutation.summary_message)))
             for remembered in mutation.remember:
                 text = remembered.get("text") if isinstance(remembered, dict) else None
                 if isinstance(text, str) and text.strip():
@@ -235,16 +254,15 @@ def apply_mutations(
         if isinstance(mutation, ToolResultMutation):
             _apply_pending_experience_mutations()
             current.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": mutation.tool_call_id,
-                    "content": mutation.content,
-                }
+                _build_tool_result_message(
+                    mutation.tool_call_id,
+                    mutation.content,
+                )
             )
             continue
         if isinstance(mutation, UserMessageMutation):
             _apply_pending_experience_mutations()
-            current.append(copy.deepcopy(mutation.message))
+            current.append(copy.deepcopy(cast(NormalizedMessageParam, mutation.message)))
             continue
         if isinstance(mutation, AssistantTruncatedMutation):
             _apply_pending_experience_mutations()

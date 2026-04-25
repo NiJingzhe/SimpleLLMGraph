@@ -196,7 +196,7 @@ def get_langfuse_trace_context() -> Optional[TraceContext]:
 
     current = _langfuse_trace_context_var.get()
     if current:
-        return dict(current)
+        return current.copy()
 
     return None
 

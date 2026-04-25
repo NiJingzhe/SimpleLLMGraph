@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import time
-from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, cast
 
 from SimpleLLMFunc.base.context_compile import CompiledContext, ContextState, compile_context, clone_messages
 from SimpleLLMFunc.base.llm_call import SingleLLMCallResult, SingleLLMPhaseResultYield, execute_single_llm_phase
@@ -35,7 +35,7 @@ from SimpleLLMFunc.observability.langfuse_client import (
     get_langfuse_trace_context,
     langfuse_client,
 )
-from SimpleLLMFunc.type.message import MessageList
+from SimpleLLMFunc.type.message import MessageList, NormalizedMessageList
 from SimpleLLMFunc.type.tool_call import ToolDefinitionList
 
 
@@ -333,7 +333,7 @@ async def run_react_loop(
         scheduler_result = ToolSchedulerResult()
         async for item in schedule_tool_batch(
             tool_calls=llm_result.tool_calls,
-            messages=state.messages,
+            messages=cast(NormalizedMessageList, state.messages),
             tool_map=tool_map,
             trace_id=current_trace_id,
             func_name=func_name,

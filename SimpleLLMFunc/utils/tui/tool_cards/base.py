@@ -104,7 +104,7 @@ class ToolCallCard(VerticalGroup):
         self.stats_dirty = True
 
     def render_single_argument_markdown(self, key: str, value: Any) -> str:
-        return self._argument_formatter({key: value}, tool_name=self.tool_name)
+        return self._argument_formatter({key: value}, self.tool_name)
 
     def refresh_arguments_markdown(self) -> None:
         if not self.arguments:

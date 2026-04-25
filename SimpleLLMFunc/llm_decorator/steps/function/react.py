@@ -20,7 +20,7 @@ from SimpleLLMFunc.base.post_process import extract_content_from_response
 from SimpleLLMFunc.hooks.abort import AbortSignal
 from SimpleLLMFunc.interface.llm_interface import LLM_Interface
 from SimpleLLMFunc.logger import push_debug, push_error, push_warning
-from SimpleLLMFunc.logger.logger import get_location, get_current_context_attribute
+from SimpleLLMFunc.logger.logger import get_location
 from SimpleLLMFunc.logger.context_manager import get_current_trace_id
 from SimpleLLMFunc.type import MessageList, ToolDefinitionList
 from SimpleLLMFunc.hooks.stream import (
@@ -79,7 +79,6 @@ async def execute_llm_call(
     The core always emits `ReactOutput`. Legacy raw-response iteration is derived
     here for callers that still request non-event behavior.
     """
-    func_name = get_current_context_attribute("function_name") or "Unknown Function"
     current_trace_id = trace_id or get_current_trace_id() or ""
 
     react_stream = ReAct_loop(
@@ -248,7 +247,6 @@ async def execute_react_loop(
                 )
 
                 # 重试 LLM 调用
-                retry_times = llm_kwargs.get("retry_times", 2)
                 retry_stream = execute_llm_call(
                     llm_interface=llm_interface,
                     messages=messages,

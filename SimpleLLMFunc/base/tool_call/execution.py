@@ -17,6 +17,7 @@ from typing import (
     get_args,
     Union as TypingUnion,
 )
+from langfuse.types import TraceContext
 
 from SimpleLLMFunc.logger import push_debug, push_error, push_warning
 from SimpleLLMFunc.logger.logger import get_location
@@ -194,7 +195,7 @@ async def _execute_single_tool_call(
     tool_call: Dict[str, Any],
     tool_map: Dict[str, Callable[..., Awaitable[Any]]],
     event_emitter: Any = None,
-    trace_context: Optional[dict[str, str]] = None,
+    trace_context: Optional[TraceContext] = None,
 ) -> tuple[Dict[str, Any], List[Dict[str, Any]], bool]:
     """Execute a single tool call and return its results.
 
@@ -269,8 +270,9 @@ async def _execute_single_tool_call(
             has_event_emitter_param = False
 
             # 尝试从绑定方法获取 Tool 对象
-            if hasattr(tool_func, "__self__"):
-                tool_obj = tool_func.__self__
+            bound_self = getattr(tool_func, "__self__", None)
+            if bound_self is not None:
+                tool_obj = bound_self
                 original_func = getattr(tool_obj, "func", None)
                 if tool_obj and hasattr(tool_obj, "parameters"):
                     has_event_emitter_param = "event_emitter" in [

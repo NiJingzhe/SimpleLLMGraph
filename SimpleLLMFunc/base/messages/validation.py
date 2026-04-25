@@ -3,22 +3,22 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Dict
+from typing import Any, cast
 
-from SimpleLLMFunc.type.message import MessageList
+from SimpleLLMFunc.type.message import MessageList, NormalizedMessageList, NormalizedMessageParam
 
 ALLOWED_MESSAGE_ROLES = {"system", "user", "assistant", "tool", "function"}
 
 
-def message_to_dict(message: Any, index: int) -> Dict[str, Any]:
+def message_to_dict(message: Any, index: int) -> NormalizedMessageParam:
     if isinstance(message, dict):
-        return copy.deepcopy(message)
+        return cast(NormalizedMessageParam, copy.deepcopy(message))
 
     model_dump = getattr(message, "model_dump", None)
     if callable(model_dump):
         dumped = model_dump(exclude_none=False)
         if isinstance(dumped, dict):
-            return dumped
+            return cast(NormalizedMessageParam, dumped)
 
     raise ValueError(f"message at index {index} must be a dict-like chat message")
 
@@ -35,7 +35,7 @@ def is_valid_content_for_role(role: str, content: Any) -> bool:
     return False
 
 
-def validate_message_shape(message: Dict[str, Any], index: int) -> None:
+def validate_message_shape(message: NormalizedMessageParam, index: int) -> None:
     role = message.get("role")
     if not isinstance(role, str) or role not in ALLOWED_MESSAGE_ROLES:
         raise ValueError(f"Invalid message role at index {index}: {role!r}")
@@ -75,7 +75,7 @@ def validate_message_shape(message: Dict[str, Any], index: int) -> None:
             raise ValueError("tool messages must contain non-empty tool_call_id")
 
 
-def validate_tool_linkage(messages: MessageList) -> None:
+def validate_tool_linkage(messages: MessageList | NormalizedMessageList) -> None:
     pending_tool_call_ids = []
 
     for index, message in enumerate(messages):
@@ -120,14 +120,14 @@ def validate_tool_linkage(messages: MessageList) -> None:
         raise ValueError("Unmatched assistant tool_calls without tool results")
 
 
-def normalize_and_validate_messages(messages: MessageList) -> MessageList:
-    normalized = [
+def normalize_and_validate_messages(messages: MessageList) -> NormalizedMessageList:
+    normalized: NormalizedMessageList = [
         message_to_dict(message, index) for index, message in enumerate(messages)
     ]
     for index, message in enumerate(normalized):
         validate_message_shape(message, index)
-    validate_tool_linkage(normalized)
-    return normalized
+    validate_tool_linkage(cast(NormalizedMessageList, normalized))
+    return cast(NormalizedMessageList, normalized)
 
 
 __all__ = [
