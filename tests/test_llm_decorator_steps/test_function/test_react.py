@@ -31,16 +31,16 @@ class TestExecuteLLMCall:
     """Tests for execute_llm_call function."""
 
     @pytest.mark.asyncio
-    @patch("SimpleLLMFunc.llm_decorator.steps.function.react.execute_llm")
+    @patch("SimpleLLMFunc.llm_decorator.steps.function.react.ReAct_loop")
     async def test_execute_call(
-        self, mock_execute_llm: AsyncMock, mock_llm_interface: Any, sample_messages: list
+        self, mock_react_loop: AsyncMock, mock_llm_interface: Any, sample_messages: list
     ) -> None:
         """Test executing LLM call."""
         async def mock_generator():
             yield "response1", sample_messages.copy()
             yield "response2", sample_messages.copy()
         
-        mock_execute_llm.return_value = mock_generator()
+        mock_react_loop.return_value = mock_generator()
         
         result = execute_llm_call(
             mock_llm_interface,
@@ -159,4 +159,3 @@ class TestExecuteReactLoop:
         )
         
         assert result is not None
-

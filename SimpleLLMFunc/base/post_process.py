@@ -69,15 +69,15 @@ def extract_content_from_response(response: Any, func_name: str) -> str:
                 content = ""
         else:
             push_error(
-                f"LLM 函数 '{func_name}': 未知响应格式: {type(response)}，将直接转换为字符串",
+                f"LLM function '{func_name}': unknown response format {type(response)}; converting directly to string",
                 location=get_location(),
             )
             content = ""
     except Exception as exc:
-        push_error(f"提取响应内容时出错: {str(exc)}")
+        push_error(f"Error extracting response content: {str(exc)}")
         content = ""
 
-    push_debug(f"LLM 函数 '{func_name}' 提取的内容:\n{content}")
+    push_debug(f"LLM function '{func_name}' extracted content:\n{content}")
     return content
 
 
@@ -87,7 +87,7 @@ def extract_content_from_stream_response(chunk: Any, func_name: str) -> str:
     content = ""
     if not chunk:
         push_warning(
-            f"LLM 函数 '{func_name}': 检测到空的流响应 chunk，返回空字符串",
+            f"LLM function '{func_name}': detected empty stream chunk; returning empty string",
             location=get_location(),
         )
         return content
@@ -104,12 +104,12 @@ def extract_content_from_stream_response(chunk: Any, func_name: str) -> str:
                 content = ""
         else:
             push_debug(
-                f"LLM 函数 '{func_name}': 检测到流响应格式: {type(chunk)}，内容为: {chunk}，预估不包含content，将会返回空串",
+                f"LLM function '{func_name}': detected stream response format {type(chunk)} with content {chunk}; expected no content field, returning empty string",
                 location=get_location(),
             )
             content = ""
     except Exception as exc:
-        push_error(f"提取流响应内容时出错: {str(exc)}")
+        push_error(f"Error extracting stream response content: {str(exc)}")
         content = ""
 
     return content
@@ -218,7 +218,7 @@ def _convert_xml_to_list(content: str, list_type: Any, func_name: str) -> List[A
 
         return converted_list
     except Exception as exc:
-        push_error(f"解析错误详情: {str(exc)}, 内容: {content[:200]}")
+        push_error(f"Parsing error details: {str(exc)}, content: {content[:200]}")
         raise ValueError(f"无法解析为 List: {str(exc)}") from exc
 
 
@@ -240,7 +240,7 @@ def _convert_xml_to_pydantic(content: str, model_class: Type, func_name: str) ->
 
         return dict_to_pydantic(data_dict, model_class)
     except Exception as exc:
-        push_error(f"解析错误详情: {str(exc)}, 内容: {content[:200]}")
+        push_error(f"Parsing error details: {str(exc)}, content: {content[:200]}")
         raise ValueError(f"无法解析为 Pydantic 模型: {str(exc)}") from exc
 
 

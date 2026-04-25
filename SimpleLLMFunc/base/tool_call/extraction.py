@@ -191,7 +191,7 @@ def extract_tool_calls(response: Any) -> List[Dict[str, Any]]:
                         }
                     )
     except Exception as exc:
-        push_error(f"提取工具调用时出错: {str(exc)}")
+        push_error(f"Error extracting tool calls: {str(exc)}")
     finally:
         return tool_calls
 
@@ -207,7 +207,7 @@ def accumulate_tool_calls_from_chunks(
         index = chunk.get("index")
         if index is None:
             push_warning(
-                "工具调用 chunk 缺少 'index' 属性，已跳过处理",
+                "Tool call chunk is missing 'index'; skipping",
                 location=get_location(),
             )
             continue
@@ -292,7 +292,7 @@ def extract_tool_calls_from_stream_response(chunk: Any) -> List[Dict[str, Any]]:
 
                         tool_call_chunks.append(tool_call_chunk)
     except Exception as exc:
-        push_error(f"提取流工具调用时出错: {str(exc)}")
+        push_error(f"Error extracting streaming tool calls: {str(exc)}")
 
     return tool_call_chunks
 
@@ -354,10 +354,10 @@ def extract_reasoning_details(response: Any) -> List[ReasoningDetail]:
                             )
                         )
     except Exception as exc:
-        push_error(f"提取 reasoning_details 时出错: {str(exc)}")
+        push_error(f"Error extracting reasoning_details: {str(exc)}")
         import traceback
 
-        push_error(f"详细错误: {traceback.format_exc()}")
+        push_error(f"Detailed error: {traceback.format_exc()}")
 
     return reasoning_details
 
@@ -421,9 +421,9 @@ def extract_reasoning_details_from_stream(chunk: Any) -> List[ReasoningDetail]:
                                 )
                             )
     except Exception as exc:
-        push_error(f"提取流式 reasoning_details 时出错: {str(exc)}")
+        push_error(f"Error extracting streaming reasoning_details: {str(exc)}")
         import traceback
 
-        push_error(f"详细错误: {traceback.format_exc()}")
+        push_error(f"Detailed error: {traceback.format_exc()}")
 
     return reasoning_details

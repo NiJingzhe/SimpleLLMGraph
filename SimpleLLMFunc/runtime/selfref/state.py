@@ -13,7 +13,11 @@ import inspect
 import threading
 from typing import Any, Awaitable, Callable, Dict, List, Optional, cast
 
-from SimpleLLMFunc.base.react_hooks import ReActState
+from SimpleLLMFunc.base.messages import (
+    validate_message_shape,
+    validate_tool_linkage,
+)
+from SimpleLLMFunc.base.react_hooks import ReActHookExecutionContext
 from SimpleLLMFunc.runtime.primitives import RuntimePrimitiveBackend
 from SimpleLLMFunc.runtime.selfref.context_ops import (
     build_context_messages_from_state_data as _context_ops_build_context_messages_from_state_data,
@@ -30,7 +34,6 @@ from SimpleLLMFunc.runtime.selfref.context_ops import (
     split_system_prompt_experiences as _context_ops_split_system_prompt_experiences,
 )
 
-_ALLOWED_ROLES = {"system", "user", "assistant", "tool", "function"}
 MemoryHistory = List[Dict[str, Any]]
 HISTORY_PARAM_NAMES = ("history", "chat_history")
 SELF_REFERENCE_KEY_OVERRIDE_TEMPLATE_PARAM = "__self_reference_key_override"
@@ -137,112 +140,13 @@ def _append_fork_task_user_message(
     return updated_history
 
 
-def _is_valid_content_for_role(role: str, content: Any) -> bool:
-    if role == "system":
-        return isinstance(content, str)
-    if role == "user":
-        return isinstance(content, (str, list))
-    if role == "assistant":
-        return content is None or isinstance(content, (str, list))
-    if role == "tool":
-        return isinstance(content, str)
-    if role == "function":
-        return isinstance(content, str)
-    return False
-
-
-def _validate_message_shape(message: Dict[str, Any], index: int) -> None:
-    role = message.get("role")
-    if not isinstance(role, str) or role not in _ALLOWED_ROLES:
-        raise ValueError(f"Invalid message role at index {index}: {role!r}")
-
-    if "content" not in message:
-        raise ValueError(
-            f"Message at index {index} is missing required field 'content'"
-        )
-
-    if not _is_valid_content_for_role(role, message.get("content")):
-        raise ValueError(
-            f"Invalid content for role '{role}' at index {index}: "
-            f"{type(message.get('content')).__name__}"
-        )
-
-    if role == "assistant" and "tool_calls" in message:
-        tool_calls = message.get("tool_calls")
-        if tool_calls is not None and not isinstance(tool_calls, list):
-            raise ValueError("assistant.tool_calls must be a list when present")
-        if isinstance(tool_calls, list):
-            for call_index, tool_call in enumerate(tool_calls):
-                if not isinstance(tool_call, dict):
-                    raise ValueError(
-                        "assistant.tool_calls entries must be dict objects "
-                        f"(index {index}, tool_call {call_index})"
-                    )
-                call_id = tool_call.get("id")
-                if not isinstance(call_id, str) or not call_id.strip():
-                    raise ValueError(
-                        "assistant.tool_calls entries must contain non-empty id "
-                        f"(index {index}, tool_call {call_index})"
-                    )
-
-    if role == "tool":
-        tool_call_id = message.get("tool_call_id")
-        if not isinstance(tool_call_id, str) or not tool_call_id.strip():
-            raise ValueError("tool messages must contain non-empty tool_call_id")
-
-
-def _validate_tool_linkage(messages: MemoryHistory) -> None:
-    pending_tool_call_ids: List[str] = []
-
-    for index, message in enumerate(messages):
-        role = message.get("role")
-
-        if role == "assistant":
-            tool_calls = message.get("tool_calls")
-            if pending_tool_call_ids and not tool_calls:
-                raise ValueError(
-                    "Missing tool results before next assistant message "
-                    f"(index {index})"
-                )
-            if isinstance(tool_calls, list):
-                for tool_call in tool_calls:
-                    call_id = tool_call.get("id")
-                    if isinstance(call_id, str) and call_id:
-                        pending_tool_call_ids.append(call_id)
-            continue
-
-        if role == "tool":
-            tool_call_id = message.get("tool_call_id")
-            if not pending_tool_call_ids:
-                raise ValueError(
-                    "Tool message appears without preceding assistant tool_calls "
-                    f"(index {index})"
-                )
-            if tool_call_id not in pending_tool_call_ids:
-                raise ValueError(
-                    "tool_call_id does not match pending assistant tool_calls "
-                    f"(index {index})"
-                )
-            pending_tool_call_ids.remove(tool_call_id)
-            continue
-
-        if pending_tool_call_ids:
-            raise ValueError(
-                "Pending assistant tool_calls must be followed by matching tool "
-                f"messages before role '{role}' (index {index})"
-            )
-
-    if pending_tool_call_ids:
-        raise ValueError("Unmatched assistant tool_calls without tool results")
-
-
 def _validate_history_for_memory_methods(messages: MemoryHistory) -> None:
     for index, message in enumerate(messages):
         if not isinstance(message, dict):
             raise ValueError(f"history item at index {index} must be a dict")
-        _validate_message_shape(message, index)
+        validate_message_shape(message, index)
 
-    _validate_tool_linkage(messages)
+    validate_tool_linkage(messages)
 
 
 def _coerce_history_list(history: List[Any]) -> MemoryHistory:
@@ -725,9 +629,10 @@ class SelfReference(RuntimePrimitiveBackend):
         self._fork_tasks: Dict[str, asyncio.Task[Dict[str, Any]]] = {}
         self._fork_results: Dict[str, Dict[str, Any]] = {}
         self._fork_emitters: Dict[str, Any] = {}
-        self._active_react_states_by_key: Dict[str, ReActState] = {}
+        self._active_react_states_by_key: Dict[str, ReActHookExecutionContext] = {}
         self._active_destructive_mutation_keys: set[str] = set()
         self._pending_compactions: Dict[str, Dict[str, Any]] = {}
+        self._pending_context_mutations: Dict[str, List[Dict[str, Any]]] = {}
         self._experience_id_counter = 0
         self._install_ref_count = 0
         self._active_memory_key_var: contextvars.ContextVar[Optional[str]] = (
@@ -760,7 +665,7 @@ class SelfReference(RuntimePrimitiveBackend):
             f"simplellmfunc_self_reference_active_template_params_{id(self)}",
             default=None,
         )
-        self._active_react_state_var: contextvars.ContextVar[Optional[ReActState]] = (
+        self._active_react_state_var: contextvars.ContextVar[Optional[ReActHookExecutionContext]] = (
             contextvars.ContextVar(
                 f"simplellmfunc_self_reference_active_react_state_{id(self)}",
                 default=None,
@@ -793,6 +698,7 @@ class SelfReference(RuntimePrimitiveBackend):
             self._active_react_states_by_key.clear()
             self._active_destructive_mutation_keys.clear()
             self._pending_compactions.clear()
+            self._pending_context_mutations.clear()
             self._history_store.clear()
             self._agent_instance = None
             self._agent_default_memory_key = None
@@ -895,8 +801,8 @@ class SelfReference(RuntimePrimitiveBackend):
         return dict(value) if value is not None else None
 
     def _set_active_react_state(
-        self, state: ReActState
-    ) -> tuple[contextvars.Token[Optional[ReActState]], Optional[str]]:
+        self, state: ReActHookExecutionContext
+    ) -> tuple[contextvars.Token[Optional[ReActHookExecutionContext]], Optional[str]]:
         token = self._active_react_state_var.set(state)
         active_key = self._get_active_memory_key()
         if active_key is not None:
@@ -906,7 +812,10 @@ class SelfReference(RuntimePrimitiveBackend):
 
     def _reset_active_react_state(
         self,
-        token_and_key: tuple[contextvars.Token[Optional[ReActState]], Optional[str]],
+        token_and_key: tuple[
+            contextvars.Token[Optional[ReActHookExecutionContext]],
+            Optional[str],
+        ],
     ) -> None:
         token, active_key = token_and_key
         self._active_react_state_var.reset(token)
@@ -914,7 +823,7 @@ class SelfReference(RuntimePrimitiveBackend):
             with self._lock:
                 self._active_react_states_by_key.pop(active_key, None)
 
-    def _get_active_react_state(self) -> Optional[ReActState]:
+    def _get_active_react_state(self) -> Optional[ReActHookExecutionContext]:
         return self._active_react_state_var.get()
 
     def _get_active_history_target(self, key: str) -> Optional[MemoryHistory]:
@@ -1019,14 +928,14 @@ class SelfReference(RuntimePrimitiveBackend):
         for index, message in enumerate(normalized_messages):
             if not isinstance(message, dict):
                 raise ValueError(f"context message at index {index} must be a dict")
-            _validate_message_shape(message, index)
+            validate_message_shape(message, index)
 
         working_messages = cast(
             MemoryHistory,
             _parse_context_messages(normalized_messages)["working_messages"],
         )
         if validate_working_linkage:
-            _validate_tool_linkage(working_messages)
+            validate_tool_linkage(working_messages)
         return _canonicalize_context_messages(normalized_messages)
 
     def snapshot_context_messages(self, key: str) -> MemoryHistory:
@@ -1039,6 +948,14 @@ class SelfReference(RuntimePrimitiveBackend):
     def remember_experience(self, key: str, text: str) -> Dict[str, str]:
         normalized_key = _normalize_key(key)
         normalized_text = _normalize_experience_text(text)
+        active_messages = self._get_active_history_target(normalized_key)
+        if active_messages is not None:
+            self.queue_context_mutation(
+                normalized_key,
+                {"type": "experience_remember", "text": normalized_text},
+            )
+            return {"id": f"pending::{normalized_text}", "text": normalized_text}
+
         context_state = self.parse_context_state(normalized_key)
         experiences = cast(List[Dict[str, str]], context_state["experiences"])
 
@@ -1058,6 +975,14 @@ class SelfReference(RuntimePrimitiveBackend):
         normalized_key = _normalize_key(key)
         if not isinstance(experience_id, str) or not experience_id.strip():
             raise ValueError("experience_id must be a non-empty string")
+
+        active_messages = self._get_active_history_target(normalized_key)
+        if active_messages is not None:
+            self.queue_context_mutation(
+                normalized_key,
+                {"type": "experience_forget", "experience_id": experience_id.strip()},
+            )
+            return True
 
         context_state = self.parse_context_state(normalized_key)
         experiences = cast(List[Dict[str, str]], context_state["experiences"])
@@ -1108,6 +1033,19 @@ class SelfReference(RuntimePrimitiveBackend):
         with self._lock:
             return normalized_key in self._pending_compactions
 
+    def queue_context_mutation(self, key: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        normalized_key = _normalize_key(key)
+        with self._lock:
+            queue = self._pending_context_mutations.setdefault(normalized_key, [])
+            queue.append(copy.deepcopy(payload))
+        return copy.deepcopy(payload)
+
+    def consume_pending_context_mutations(self, key: str) -> List[Dict[str, Any]]:
+        normalized_key = _normalize_key(key)
+        with self._lock:
+            payloads = self._pending_context_mutations.pop(normalized_key, [])
+        return copy.deepcopy(payloads)
+
     def commit_pending_compaction(
         self,
         key: str,
@@ -1146,6 +1084,7 @@ class SelfReference(RuntimePrimitiveBackend):
         context_state["working_messages"] = []
 
         compiled = self._build_context_messages_from_state(context_state)
+        self.mark_destructive_history_mutation(normalized_key)
         self.set_context_messages(normalized_key, compiled)
         return compiled
 

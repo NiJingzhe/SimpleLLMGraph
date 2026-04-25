@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from SimpleLLMFunc.builtin.file_tools import FileToolset
 from SimpleLLMFunc.base.tool_call.execution import (
     _execute_single_tool_call,
     process_tool_calls,
@@ -91,6 +92,33 @@ class TestExecuteSingleToolCall:
         assert is_multimodal is True
         assert len(messages) == 1
         assert messages[0]["role"] == "user"
+
+    @pytest.mark.asyncio
+    async def test_execute_builtin_read_image_result(self, tmp_path) -> None:
+        """read_image builtin should surface as multimodal user content."""
+        image_path = tmp_path / "chart.png"
+        image_path.write_bytes(b"")
+
+        tool = next(
+            tool for tool in FileToolset(tmp_path).toolset if tool.name == "read_image"
+        )
+        tool_call = {
+            "id": "call_123",
+            "type": "function",
+            "function": {"name": "read_image", "arguments": '{"path": "chart.png"}'},
+        }
+        tool_map = {"read_image": tool.run}
+
+        _, messages, is_multimodal = await _execute_single_tool_call(tool_call, tool_map)
+
+        assert is_multimodal is True
+        assert len(messages) == 1
+        assert messages[0]["role"] == "user"
+        content = messages[0]["content"]
+        assert isinstance(content, list)
+        assert content[1]["type"] == "image_url"
+        assert content[1]["image_url"]["detail"] == "high"
+        assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
 
     @pytest.mark.asyncio
     async def test_execute_tuple_result(self, img_url: ImgUrl) -> None:

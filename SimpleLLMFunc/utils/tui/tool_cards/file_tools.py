@@ -91,6 +91,10 @@ class ReadFileToolCallCard(FileToolCallCard):
     """Card for read_file."""
 
 
+class ReadImageToolCallCard(FileToolCallCard):
+    """Card for read_image."""
+
+
 class GrepToolCallCard(FileToolCallCard):
     """Card for grep with explicit pattern/scope sections."""
 
@@ -195,6 +199,7 @@ class EchoIntoToolCallCard(FileToolCallCard):
 __all__ = [
     "FileToolCallCard",
     "ReadFileToolCallCard",
+    "ReadImageToolCallCard",
     "GrepToolCallCard",
     "SedToolCallCard",
     "EchoIntoToolCallCard",

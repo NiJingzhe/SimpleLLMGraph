@@ -15,13 +15,13 @@ from typing import (
     cast,
 )
 
-from SimpleLLMFunc.base.ReAct import execute_llm
+from SimpleLLMFunc.base.ReAct import ReAct_loop
 from SimpleLLMFunc.hooks.abort import AbortSignal
 from SimpleLLMFunc.interface.llm_interface import LLM_Interface
 from SimpleLLMFunc.tool import Tool
 from SimpleLLMFunc.llm_decorator.utils import process_tools
 from SimpleLLMFunc.type import MessageList, ToolDefinitionList
-from SimpleLLMFunc.hooks.stream import ReactOutput, ResponseYield, is_response_yield
+from SimpleLLMFunc.hooks.stream import ReactOutput, responses_only
 from SimpleLLMFunc.logger.logger import get_current_context_attribute
 from SimpleLLMFunc.logger.context_manager import get_current_trace_id
 
@@ -32,6 +32,23 @@ def prepare_tools_for_execution(
 ) -> tuple[ToolDefinitionList, Dict[str, Callable[..., Awaitable[Any]]]]:
     """准备工具供执行使用"""
     return process_tools(toolkit, func_name)
+
+
+async def _coerce_response_pairs(
+    react_stream: AsyncGenerator[Any, None],
+) -> AsyncGenerator[Tuple[Any, MessageList], None]:
+    async for output in react_stream:
+        if isinstance(output, tuple):
+            yield cast(Tuple[Any, MessageList], output)
+            continue
+        if getattr(output, "type", None) == "response":
+            typed_output = cast(ReactOutput, output)
+
+            async def _single_item() -> AsyncGenerator[ReactOutput, None]:
+                yield typed_output
+
+            async for response, updated_messages in responses_only(_single_item()):
+                yield response, updated_messages
 
 
 async def execute_llm_call(
@@ -48,11 +65,15 @@ async def execute_llm_call(
     hooks: Any = None,
     **llm_kwargs: Any,
 ) -> AsyncGenerator[Union[Tuple[Any, MessageList], ReactOutput], None]:
-    """执行 LLM 调用，返回响应和更新后的消息（或 ReactOutput）"""
+    """Execute one LLM/ReAct stream.
+
+    The core always emits `ReactOutput`. Legacy tuple output is derived here
+    for callers that still request non-event behavior.
+    """
     func_name = get_current_context_attribute("function_name") or "Unknown Function"
     current_trace_id = trace_id or get_current_trace_id() or ""
 
-    async for output in execute_llm(
+    react_stream = ReAct_loop(
         llm_interface=llm_interface,
         messages=messages,
         tools=tools,
@@ -65,15 +86,17 @@ async def execute_llm_call(
         abort_signal=abort_signal,
         hooks=hooks,
         **llm_kwargs,
-    ):
-        if enable_event:
-            # 事件模式：直接 yield ReactOutput
+    )
+
+    if enable_event:
+        async for output in react_stream:
             yield output
-        else:
-            # 向后兼容模式：yield (response, messages) 元组
-            # 类型断言：当 enable_event=False 时，output 一定是 Tuple[Any, MessageList]
-            response, updated_messages = cast(Tuple[Any, MessageList], output)
-            yield response, updated_messages
+        return
+
+    async for response, updated_messages in _coerce_response_pairs(
+        cast(AsyncGenerator[Any, None], react_stream)
+    ):
+        yield response, updated_messages
 
 
 async def execute_react_loop_streaming(

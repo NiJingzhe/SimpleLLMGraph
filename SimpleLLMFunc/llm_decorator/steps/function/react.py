@@ -15,7 +15,7 @@ from typing import (
     cast,
 )
 
-from SimpleLLMFunc.base.ReAct import execute_llm
+from SimpleLLMFunc.base.ReAct import ReAct_loop
 from SimpleLLMFunc.base.post_process import extract_content_from_response
 from SimpleLLMFunc.hooks.abort import AbortSignal
 from SimpleLLMFunc.interface.llm_interface import LLM_Interface
@@ -25,10 +25,8 @@ from SimpleLLMFunc.logger.context_manager import get_current_trace_id
 from SimpleLLMFunc.type import MessageList, ToolDefinitionList
 from SimpleLLMFunc.hooks.stream import (
     ReactOutput,
-    ResponseYield,
+    responses_only,
     is_response_yield,
-    EventYield,
-    is_event_yield,
 )
 
 
@@ -45,6 +43,24 @@ def prepare_tools_for_execution(
     return process_tools(toolkit, func_name)
 
 
+async def _coerce_responses(
+    react_stream: AsyncGenerator[Any, None],
+) -> AsyncGenerator[Any, None]:
+    async for output in react_stream:
+        if isinstance(output, tuple):
+            response, _messages = output
+            yield response
+            continue
+        if getattr(output, "type", None) == "response":
+            typed_output = cast(ReactOutput, output)
+
+            async def _single_item() -> AsyncGenerator[ReactOutput, None]:
+                yield typed_output
+
+            async for response, _messages in responses_only(_single_item()):
+                yield response
+
+
 async def execute_llm_call(
     llm_interface: LLM_Interface,
     messages: MessageList,
@@ -58,15 +74,15 @@ async def execute_llm_call(
     abort_signal: Optional[AbortSignal] = None,
     **llm_kwargs: Any,
 ) -> AsyncGenerator[Union[Any, ReactOutput], None]:
-    """执行 LLM 调用
+    """Execute one LLM/ReAct stream.
 
-    当 enable_event=True 时，yield ReactOutput（包括事件和响应）
-    当 enable_event=False 时，yield response（向后兼容）
+    The core always emits `ReactOutput`. Legacy raw-response iteration is derived
+    here for callers that still request non-event behavior.
     """
     func_name = get_current_context_attribute("function_name") or "Unknown Function"
     current_trace_id = trace_id or get_current_trace_id() or ""
 
-    async for output in execute_llm(
+    react_stream = ReAct_loop(
         llm_interface=llm_interface,
         messages=messages,
         tools=tools,
@@ -78,20 +94,15 @@ async def execute_llm_call(
         user_task_prompt=user_task_prompt,
         abort_signal=abort_signal,
         **llm_kwargs,
-    ):
-        if enable_event:
-            # 事件模式：yield 完整的 ReactOutput（包括事件和响应）
-            # output 此时是 ReactOutput
+    )
+
+    if enable_event:
+        async for output in react_stream:
             yield output
-        else:
-            # 向后兼容模式：只 yield response
-            # output 此时是 Tuple[Any, MessageList]
-            if isinstance(output, tuple):
-                response, _ = output
-                yield response
-            elif is_response_yield(output):
-                # 如果意外收到 ReactOutput，提取 response
-                yield output.response
+        return
+
+    async for response in _coerce_responses(cast(AsyncGenerator[Any, None], react_stream)):
+        yield response
 
 
 async def get_final_response(
@@ -104,15 +115,12 @@ async def get_final_response(
     当 enable_event=False 时，直接获取最后一个响应值
     """
     if enable_event:
-        # 事件模式：收集所有输出，返回最后一个 ResponseYield 的响应
         last_response = None
         async for output in response_stream:
             if is_response_yield(output):
                 last_response = output.response
         return last_response
-    else:
-        # 向后兼容模式：直接获取最后一个响应值
-        return await get_last_item_of_async_generator(response_stream)
+    return await get_last_item_of_async_generator(response_stream)
 
 
 def check_response_content_empty(response: Any, func_name: str) -> bool:

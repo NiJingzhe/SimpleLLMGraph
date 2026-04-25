@@ -9,6 +9,7 @@ from SimpleLLMFunc.utils.tui.tool_cards.file_tools import (
     EchoIntoToolCallCard,
     GrepToolCallCard,
     ReadFileToolCallCard,
+    ReadImageToolCallCard,
     SedToolCallCard,
 )
 
@@ -25,6 +26,11 @@ def test_factory_returns_builtin_specialized_cards() -> None:
         tool_call_id="call-2",
         model_call_id="llm-1",
         tool_name="read_file",
+    )
+    read_image_card = build_tool_call_card(
+        tool_call_id="call-2b",
+        model_call_id="llm-1",
+        tool_name="read_image",
     )
     grep_card = build_tool_call_card(
         tool_call_id="call-3",
@@ -49,6 +55,7 @@ def test_factory_returns_builtin_specialized_cards() -> None:
 
     assert isinstance(execute_card, ExecuteCodeToolCallCard)
     assert isinstance(read_card, ReadFileToolCallCard)
+    assert isinstance(read_image_card, ReadImageToolCallCard)
     assert isinstance(grep_card, GrepToolCallCard)
     assert isinstance(sed_card, SedToolCallCard)
     assert isinstance(echo_card, EchoIntoToolCallCard)

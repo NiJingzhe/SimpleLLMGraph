@@ -179,7 +179,7 @@ SimpleLLMFunc/
 **架构特点**:
 
 - ReAct 循环核心实现，支持工具调用编排
-- `execute_llm()` 已按 phase 拆分，统一 LLM phase、tool batch phase 与 terminal finalize phase
+- `ReAct_loop()` 已按 phase 拆分，统一 LLM phase、tool batch phase 与 terminal finalize phase
 - 工具调用执行、验证、提取逻辑
 - 消息处理和类型解析
 

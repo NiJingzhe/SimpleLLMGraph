@@ -487,7 +487,7 @@ If you encounter any issues after upgrading:
 
 ### Refactoring
 
-1. **ReAct Engine Return Type Enhancement**: Modified `execute_llm` function to return both response and message history in streaming mode.
+1. **ReAct Engine Return Type Enhancement**: Modified the ReAct loop entrypoint at that time to return both response and message history in streaming mode.
    - Changed return type from `AsyncGenerator[Any, None]` to `AsyncGenerator[Tuple[Any, List[Dict[str, Any]]], None]`
    - Now yields `(response, current_messages.copy())` instead of just `response`
    - Creates a copy of `current_messages` to avoid modifying the original list

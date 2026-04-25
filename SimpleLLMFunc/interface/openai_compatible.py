@@ -161,8 +161,10 @@ class OpenAICompatible(LLM_Interface):
         try:
             all_providers_info = json.loads(json_str)
         except json.JSONDecodeError as e:
-            push_critical(f"解析 JSON 字符串失败：{e}", location=get_location())
-            raise ValueError(f"解析 JSON 字符串失败：{e}")
+            push_critical(
+                f"Failed to parse JSON string: {e}", location=get_location()
+            )
+            raise ValueError(f"Failed to parse JSON string: {e}")
         # 检查JSON格式
 
         try:
@@ -170,17 +172,17 @@ class OpenAICompatible(LLM_Interface):
             for provider_id, models in all_providers_info.items():
                 all_providers_dict[provider_id] = {}
                 app_log(
-                    f"正在为提供商加载 OpenAICompatible 实例：{provider_id}",
+                    f"Loading OpenAICompatible instances for provider: {provider_id}",
                     location=get_location(),
                 )
 
                 if not isinstance(models, list):
                     push_critical(
-                        f"提供商 {provider_id} 下的模型格式无效。应为列表。",
+                        f"Invalid model format under provider {provider_id}. Expected a list.",
                         location=get_location(),
                     )
                     raise TypeError(
-                        f"提供商 {provider_id} 下的模型格式无效。应为列表。"
+                        f"Invalid model format under provider {provider_id}. Expected a list."
                     )
 
                 for model_info in models:
@@ -215,26 +217,29 @@ class OpenAICompatible(LLM_Interface):
                     all_providers_dict[provider_id][model_name] = instance
 
                     app_log(
-                        f"已为提供商 {provider_id} 加载模型 {model_name} 的 OpenAICompatible 实例",
+                        f"Loaded OpenAICompatible instance for provider {provider_id} model {model_name}",
                         location=get_location(),
                     )
         except ValueError as e:
             push_critical(
-                f"加载 OpenAICompatible 实例时出错：{e}", location=get_location()
-            )
-            raise ValueError(f"加载 OpenAICompatible 实例时出错：{e}")
-        except TypeError as e:
-            push_critical(f"JSON 中的类型无效：{e}", location=get_location())
-            raise ValueError(f"JSON 中的类型无效：{e}")
-        except KeyError as e:
-            push_critical(f"JSON 中缺少必需的密钥：{e}", location=get_location())
-            raise ValueError(f"JSON 中缺少必需的密钥：{e}")
-        except Exception as e:
-            push_critical(
-                f"加载 OpenAICompatible 实例时发生未知错误：{e}",
+                f"Error while loading OpenAICompatible instances: {e}",
                 location=get_location(),
             )
-            raise ValueError(f"加载 OpenAICompatible 实例时发生未知错误：{e}")
+            raise ValueError(f"Error while loading OpenAICompatible instances: {e}")
+        except TypeError as e:
+            push_critical(f"Invalid type in JSON: {e}", location=get_location())
+            raise ValueError(f"Invalid type in JSON: {e}")
+        except KeyError as e:
+            push_critical(f"Missing required key in JSON: {e}", location=get_location())
+            raise ValueError(f"Missing required key in JSON: {e}")
+        except Exception as e:
+            push_critical(
+                f"Unknown error while loading OpenAICompatible instances: {e}",
+                location=get_location(),
+            )
+            raise ValueError(
+                f"Unknown error while loading OpenAICompatible instances: {e}"
+            )
 
         return all_providers_dict
 
@@ -377,10 +382,10 @@ class OpenAICompatible(LLM_Interface):
                 )
                 if not token_acquired:
                     push_warning(
-                        f"{self.model_name} 令牌桶获取令牌超时，跳过此次请求",
+                        f"{self.model_name} token bucket acquire timed out; skipping request",
                         location=get_location(),
                     )
-                    raise Exception("Rate limit: 令牌桶获取令牌超时")
+                    raise Exception("Rate limit: token bucket acquire timed out")
 
                 self.key_pool.increment_task_count(key)
                 data = json.dumps(messages, ensure_ascii=False, indent=4)
@@ -482,10 +487,10 @@ class OpenAICompatible(LLM_Interface):
                 )
                 if not token_acquired:
                     push_warning(
-                        f"{self.model_name} 流式请求令牌桶获取令牌超时，跳过此次请求",
+                        f"{self.model_name} stream token bucket acquire timed out; skipping request",
                         location=get_location(),
                     )
-                    raise Exception("Rate limit: 令牌桶获取令牌超时")
+                    raise Exception("Rate limit: token bucket acquire timed out")
 
                 self.key_pool.increment_task_count(key)
                 data = json.dumps(messages, ensure_ascii=False, indent=4)

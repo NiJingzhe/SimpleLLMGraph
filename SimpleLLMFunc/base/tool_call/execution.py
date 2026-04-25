@@ -103,7 +103,7 @@ def _convert_tool_arguments(
                             ]
                         except Exception as e:
                             push_warning(
-                                f"工具参数 '{param_name}' 转换为 List[ImgPath] 失败: {e}，使用原始值",
+                                f"Failed to convert tool argument '{param_name}' to List[ImgPath]: {e}; using original value",
                                 location=get_location(),
                             )
                             converted_args[param_name] = param_value
@@ -117,7 +117,7 @@ def _convert_tool_arguments(
                             ]
                         except Exception as e:
                             push_warning(
-                                f"工具参数 '{param_name}' 转换为 List[ImgUrl] 失败: {e}，使用原始值",
+                                f"Failed to convert tool argument '{param_name}' to List[ImgUrl]: {e}; using original value",
                                 location=get_location(),
                             )
                             converted_args[param_name] = param_value
@@ -131,7 +131,7 @@ def _convert_tool_arguments(
                             ]
                         except Exception as e:
                             push_warning(
-                                f"工具参数 '{param_name}' 转换为 List[Text] 失败: {e}，使用原始值",
+                                f"Failed to convert tool argument '{param_name}' to List[Text]: {e}; using original value",
                                 location=get_location(),
                             )
                             converted_args[param_name] = param_value
@@ -147,7 +147,7 @@ def _convert_tool_arguments(
                         converted_args[param_name] = ImgPath(param_value)
                     except Exception as e:
                         push_warning(
-                            f"工具参数 '{param_name}' 转换为 ImgPath 失败: {e}，使用原始值",
+                            f"Failed to convert tool argument '{param_name}' to ImgPath: {e}; using original value",
                             location=get_location(),
                         )
                         converted_args[param_name] = param_value
@@ -159,7 +159,7 @@ def _convert_tool_arguments(
                         converted_args[param_name] = ImgUrl(param_value)
                     except Exception as e:
                         push_warning(
-                            f"工具参数 '{param_name}' 转换为 ImgUrl 失败: {e}，使用原始值",
+                            f"Failed to convert tool argument '{param_name}' to ImgUrl: {e}; using original value",
                             location=get_location(),
                         )
                         converted_args[param_name] = param_value
@@ -171,7 +171,7 @@ def _convert_tool_arguments(
                         converted_args[param_name] = Text(param_value)
                     except Exception as e:
                         push_warning(
-                            f"工具参数 '{param_name}' 转换为 Text 失败: {e}，使用原始值",
+                            f"Failed to convert tool argument '{param_name}' to Text: {e}; using original value",
                             location=get_location(),
                         )
                         converted_args[param_name] = param_value
@@ -184,7 +184,7 @@ def _convert_tool_arguments(
         return converted_args
     except Exception as e:
         push_warning(
-            f"工具参数转换过程中出错: {e}，使用原始参数",
+            f"Error while converting tool arguments: {e}; using original arguments",
             location=get_location(),
         )
         return arguments
@@ -223,12 +223,12 @@ async def _execute_single_tool_call(
     messages_to_append: List[Dict[str, Any]] = []
 
     if tool_name not in tool_map:
-        push_error(f"工具 '{tool_name}' 不在可用工具列表中")
+        push_error(f"Tool '{tool_name}' is not available in the tool map")
         tool_error_message = {
             "role": "tool",
             "tool_call_id": tool_call_id,
             "content": json.dumps(
-                {"error": f"找不到工具 '{tool_name}'"}, ensure_ascii=False, indent=2
+                {"error": f"Tool '{tool_name}' was not found"}, ensure_ascii=False, indent=2
             ),
         }
         messages_to_append.append(tool_error_message)
@@ -246,19 +246,19 @@ async def _execute_single_tool_call(
             repaired_arguments_str = repair_tool_call_arguments(arguments_str)
             if repaired_arguments_str != arguments_str:
                 push_warning(
-                    f"工具 '{tool_name}' 参数 JSON 已自动修复",
+                    f"Tool '{tool_name}' argument JSON was auto-repaired",
                     location=get_location(),
                 )
                 arguments_str = repaired_arguments_str
 
             arguments = parse_tool_call_arguments(arguments_str)
             if arguments is None:
-                raise ValueError("工具参数不是合法的 JSON 对象")
+                raise ValueError("Tool arguments are not a valid JSON object")
 
             # 更新为解析后的参数
             tool_span.update(input=arguments)
 
-            push_debug(f"执行工具 '{tool_name}' 参数: {arguments_str}")
+            push_debug(f"Executing tool '{tool_name}' with arguments: {arguments_str}")
 
             tool_func = tool_map[tool_name]
 
@@ -301,6 +301,7 @@ async def _execute_single_tool_call(
             if not is_valid_tool_result(tool_result):
                 push_warning(
                     f"工具 '{tool_name}' 返回了不支持的格式: {type(tool_result)}。支持的返回格式包括: str, JSON可序列化对象, ImgPath, ImgUrl, Tuple[str, ImgPath], Tuple[str, ImgUrl]",
+                    f"Tool '{tool_name}' returned unsupported type {type(tool_result)}. Supported return formats: str, JSON-serializable objects, ImgPath, ImgUrl, Tuple[str, ImgPath], Tuple[str, ImgUrl]",
                     location=get_location(),
                 )
                 tool_result_content_json: str = json.dumps(
@@ -421,7 +422,9 @@ async def _execute_single_tool_call(
                     "content": tool_result_content_json,
                 }
                 messages_to_append.append(tool_message)
-                push_debug(f"工具 '{tool_name}' 执行完成: {tool_result_content_json}")
+                push_debug(
+                    f"Tool '{tool_name}' completed: {tool_result_content_json}"
+                )
                 return (tool_call, messages_to_append, False)
 
             if isinstance(tool_result, (Text, str)):
@@ -449,16 +452,19 @@ async def _execute_single_tool_call(
 
             if isinstance(tool_result, (ImgUrl, ImgPath)):
                 push_debug(
-                    f"工具 '{tool_name}' 执行完成: image payload",
+                    f"Tool '{tool_name}' completed: image payload",
                     location=get_location(),
                 )
             else:
                 push_debug(
-                    f"工具 '{tool_name}' 执行完成: {json.dumps(tool_result, ensure_ascii=False)}"
+                    f"Tool '{tool_name}' completed: {json.dumps(tool_result, ensure_ascii=False)}"
                 )
 
         except Exception as exc:
-            error_message = f"工具 '{tool_name}' 以参数 {arguments_str} 在执行或结果解析中出错，错误: {str(exc)}"
+            error_message = (
+                f"Tool '{tool_name}' failed during execution or result parsing with "
+                f"arguments {arguments_str}: {str(exc)}"
+            )
             push_error(error_message)
 
             # 记录错误到langfuse

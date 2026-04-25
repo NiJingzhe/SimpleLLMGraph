@@ -656,6 +656,77 @@ async def test_llm_chat_injects_active_selfref_key_for_runtime_context_ops() -> 
 
 
 @pytest.mark.asyncio
+async def test_llm_chat_runtime_context_forget_uses_mutation_only_path() -> None:
+    """runtime.selfref.context.forget inside a turn should apply through mutations, not live context edits."""
+
+    history: list[dict[str, Any]] = [{"role": "user", "content": "seed"}]
+
+    mock_llm = MagicMock()
+    mock_llm.model_name = "test-model"
+    call_counter = 0
+
+    first_response = _make_tool_call_completion(
+        "execute_code",
+        {
+            "code": (
+                "snapshot = runtime.selfref.context.inspect()\n"
+                "exp_id = snapshot['experiences'][0]['id']\n"
+                "runtime.selfref.context.forget(exp_id)"
+            )
+        },
+    )
+    second_response = _make_chat_completion("done")
+
+    async def chat_side_effect(**kwargs: Any) -> Any:
+        nonlocal call_counter
+        response = [first_response, second_response][call_counter]
+        call_counter += 1
+        return response
+
+    mock_llm.chat = AsyncMock(side_effect=chat_side_effect)
+
+    repl = PyRepl()
+    self_reference = _builtin_self_reference(repl)
+    self_reference.bind_history("agent_main", [{"role": "user", "content": "seed-main"}])
+    self_reference.remember_experience("agent_main", "to-remove")
+
+    with (
+        patch(
+            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.langfuse_client.start_as_current_observation",
+            return_value=_DummyObservation(),
+        ),
+        patch(
+            "SimpleLLMFunc.base.ReAct.langfuse_client.start_as_current_observation",
+            return_value=_DummyObservation(),
+        ),
+    ):
+
+        @llm_chat(
+            llm_interface=mock_llm,
+            toolkit=cast(Any, repl.toolset),
+            self_reference=self_reference,
+            self_reference_key="agent_main",
+            enable_event=True,
+        )
+        async def agent(message: str, history=None):
+            """test agent"""
+
+        outputs: list[ReactOutput] = []
+        async for output in cast(
+            AsyncGenerator[ReactOutput, None], agent("hello", history=history)
+        ):
+            outputs.append(output)
+
+    react_end = next(
+        output.event
+        for output in outputs
+        if isinstance(output, EventYield) and isinstance(output.event, ReactEndEvent)
+    )
+    assert react_end.final_messages == self_reference.snapshot_history("agent_main")
+    assert "to-remove" not in str(react_end.final_messages[0]["content"])
+
+
+@pytest.mark.asyncio
 async def test_llm_chat_runtime_context_compact_rewrites_final_messages() -> None:
     """runtime.selfref.context.compact should replace final context with system + assistant summary."""
 

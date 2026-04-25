@@ -48,7 +48,7 @@ class TokenBucket:
         self.initialized = True
 
         push_debug(
-            f"TokenBucket {bucket_id} 初始化完成: capacity={capacity}, refill_rate={refill_rate}",
+            f"TokenBucket {bucket_id} initialized: capacity={capacity}, refill_rate={refill_rate}",
             location=get_location(),
         )
 
@@ -65,7 +65,7 @@ class TokenBucket:
         self.last_refill_time = current_time
 
         push_debug(
-            f"TokenBucket {self.bucket_id} 补充令牌: 添加={tokens_to_add:.2f}, 当前={self.tokens:.2f}",
+            f"TokenBucket {self.bucket_id} refilled: added={tokens_to_add:.2f}, current={self.tokens:.2f}",
             location=get_location(),
         )
 
@@ -91,7 +91,7 @@ class TokenBucket:
                 if self.tokens >= tokens_needed:
                     self.tokens -= tokens_needed
                     push_debug(
-                        f"TokenBucket {self.bucket_id} 成功获取 {tokens_needed} 个令牌, 剩余={self.tokens:.2f}",
+                        f"TokenBucket {self.bucket_id} acquired {tokens_needed} tokens successfully, remaining={self.tokens:.2f}",
                         location=get_location(),
                     )
                     return True
@@ -114,7 +114,7 @@ class TokenBucket:
             wait_time = min(wait_time, 0.1)
 
             push_debug(
-                f"TokenBucket {self.bucket_id} 等待令牌补充: 需要={tokens_needed}, 可用={self.tokens:.2f}, 等待={wait_time:.3f}s",
+                f"TokenBucket {self.bucket_id} waiting for refill: needed={tokens_needed}, available={self.tokens:.2f}, wait={wait_time:.3f}s",
                 location=get_location(),
             )
 
@@ -170,7 +170,7 @@ class TokenBucket:
             self.tokens = float(self.capacity)
             self.last_refill_time = time.time()
             push_debug(
-                f"TokenBucket {self.bucket_id} 已重置，令牌数={self.tokens}",
+                f"TokenBucket {self.bucket_id} reset, tokens={self.tokens}",
                 location=get_location(),
             )
 
