@@ -5,6 +5,7 @@ from SimpleLLMFunc.base.context_compile import (
     apply_mutations,
     compile_context,
 )
+from SimpleLLMFunc.base.context_source import CompileSource, DataFromAgentConfig, DataFromSelfRef
 from SimpleLLMFunc.base.llm_call import SingleLLMCallResult
 from SimpleLLMFunc.base.mutation import (
     AssistantMessageMutation,
@@ -38,19 +39,66 @@ def test_compile_context_applies_assistant_and_tool_mutations() -> None:
         ],
     )
 
-    assert compiled.llm_messages[0] == {"role": "user", "content": "hello"}
-    assert compiled.llm_messages[1]["role"] == "assistant"
-    assert compiled.llm_messages[1]["tool_calls"][0]["id"] == "call_1"
-    assert compiled.llm_messages[2] == {
+    assert compiled.messages[0] == {"role": "user", "content": "hello"}
+    assert compiled.messages[1]["role"] == "assistant"
+    assert compiled.messages[1]["tool_calls"][0]["id"] == "call_1"
+    assert compiled.messages[2] == {
         "role": "tool",
         "tool_call_id": "call_1",
         "content": '{"ok": true}',
     }
-    assert compiled.llm_messages[3] == {"role": "assistant", "content": "done"}
-    assert compiled.semantic_messages == [
+    assert compiled.messages[3] == {"role": "assistant", "content": "done"}
+    assert compiled.messages == [
         {"role": "user", "content": "hello"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "test_tool", "arguments": "{}"},
+                }
+            ],
+        },
         {"role": "tool", "tool_call_id": "call_1", "content": '{"ok": true}'},
         {"role": "assistant", "content": "done"},
+    ]
+
+
+def test_compile_context_keeps_assistant_content_when_tool_calls_resolve() -> None:
+    state = ContextState(messages=[{"role": "user", "content": "hello"}])
+    compiled = compile_context(
+        state,
+        [
+            AssistantMessageMutation(
+                content="Let me check that.",
+                tool_calls=[
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "test_tool", "arguments": "{}"},
+                    }
+                ],
+            ),
+            ToolResultMutation(tool_call_id="call_1", content='{"ok": true}'),
+        ],
+    )
+
+    assert compiled.messages == [
+        {"role": "user", "content": "hello"},
+        {
+            "role": "assistant",
+            "content": "Let me check that.",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "test_tool", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": '{"ok": true}'},
     ]
 
 
@@ -69,7 +117,7 @@ def test_compile_context_replaces_history_when_context_replace_arrives() -> None
         ],
     )
 
-    assert compiled.llm_messages == [
+    assert compiled.messages == [
         {"role": "system", "content": "system"},
         {"role": "assistant", "content": "summary"},
         {"role": "assistant", "content": "fresh"},
@@ -96,7 +144,7 @@ def test_compile_context_summary_rebuilds_context() -> None:
         ],
     )
 
-    assert compiled.llm_messages == [
+    assert compiled.messages == [
         {"role": "system", "content": "agent"},
         {
             "role": "assistant",
@@ -174,5 +222,25 @@ def test_compile_context_appends_user_message_mutation_for_multimodal_or_prompte
         ],
     )
 
-    assert compiled.llm_messages[-1]["role"] == "user"
-    assert compiled.llm_messages[-1]["content"][0]["text"] == "image from tool"
+    assert compiled.messages[-1]["role"] == "user"
+    assert compiled.messages[-1]["content"][0]["text"] == "image from tool"
+
+
+def test_compile_source_can_join_agent_config_and_selfref_source() -> None:
+    source = CompileSource(
+        data_from_agent_config=DataFromAgentConfig(
+            base_system_prompt="agent docstring",
+            tool_prompt_specs=[{"tool_name": "execute_code"}],
+            include_must_principles=True,
+        ),
+        data_from_selfref=DataFromSelfRef(
+            base_system_prompt="agent docstring",
+            working_messages=[{"role": "user", "content": "seed"}],
+        ),
+        input_messages=[{"role": "user", "content": "seed"}],
+    )
+
+    assert source.data_from_agent_config.base_system_prompt == "agent docstring"
+    assert source.data_from_agent_config.include_must_principles is True
+    assert source.data_from_selfref is not None
+    assert source.data_from_selfref.working_messages == [{"role": "user", "content": "seed"}]

@@ -39,15 +39,11 @@ from typing import (
     AsyncGenerator,
 )
 
-from SimpleLLMFunc.llm_decorator.steps.common import (
-    parse_function_signature,
-    setup_log_context,
-)
-from SimpleLLMFunc.llm_decorator.steps.function import (
-    build_initial_prompts,
-    execute_react_loop,
-    parse_and_validate_response,
-)
+from SimpleLLMFunc.base.ReAct import ReAct_loop
+from SimpleLLMFunc.base.post_process import process_response
+from SimpleLLMFunc.llm_decorator.signature import parse_function_signature, setup_log_context
+from SimpleLLMFunc.llm_decorator.invocation_builder import build_function_invocation_spec
+from SimpleLLMFunc.llm_decorator.utils import process_tools
 from SimpleLLMFunc.interface.llm_interface import LLM_Interface
 from SimpleLLMFunc.logger import push_error
 from SimpleLLMFunc.logger.logger import get_location
@@ -72,15 +68,8 @@ def llm_function(
     max_tool_calls: Optional[int] = None,
     system_prompt_template: Optional[str] = None,
     user_prompt_template: Optional[str] = None,
-    enable_event: bool = False,
     **llm_kwargs: Any,
 ) -> Any:  # type: ignore
-    """
-    Async LLM function decorator that delegates function execution to a large language model.
-
-    When enable_event=True, the decorated function returns an AsyncGenerator[ReactOutput, None]
-    that yields events and responses. When enable_event=False (default), it returns a single value.
-    """
     """
     Async LLM function decorator that delegates function execution to a large language model.
 
@@ -146,24 +135,15 @@ def llm_function(
 
     def decorator(
         func: Union[Callable[..., T], Callable[..., Awaitable[T]]],
-    ) -> Union[
-        Callable[..., Awaitable[T]], Callable[..., AsyncGenerator[ReactOutput, None]]
-    ]:
+    ) -> Callable[..., Awaitable[T]]:
         signature = inspect.signature(func)
         docstring = func.__doc__ or ""
         func_name = func.__name__
 
-        # 统一的内部执行逻辑
-        # 使用闭包变量来传递解析后的结果（避免重复解析）
-        parsed_result: List[Optional[T]] = [None]  # 使用列表以便在闭包中修改
-
         async def _execute_function_with_events(
             *args: Any, **kwargs: Any
         ) -> AsyncGenerator[ReactOutput, None]:
-            """统一的执行逻辑，总是返回事件流
-
-            解析后的结果会存储在外层的 parsed_result 变量中
-            """
+            """统一的执行逻辑，总是返回事件流。"""
             abort_signal = kwargs.pop(ABORT_SIGNAL_PARAM, None)
             if not isinstance(abort_signal, AbortSignal):
                 abort_signal = None
@@ -188,7 +168,6 @@ def llm_function(
                             "trace_id": sig.trace_id,
                             "tools_available": len(toolkit) if toolkit else 0,
                             "max_tool_calls": max_tool_calls,
-                            "enable_event": enable_event,
                         }
                     ),
                     trace_context=trace_context,
@@ -199,14 +178,16 @@ def llm_function(
                             langfuse_client.get_current_observation_id()
                         )
                         try:
-                            # Step 3: 构建初始提示
-                            messages = build_initial_prompts(
+                            # Step 3: 构建 invocation spec（不在 decorator 中构建 provider messages）
+                            invocation_spec = build_function_invocation_spec(
                                 signature=sig,
+                                template_params=template_params,
+                                llm_kwargs=llm_kwargs,
                                 system_prompt_template=system_prompt_template,
                                 user_prompt_template=user_prompt_template,
-                                template_params=template_params,
                                 toolkit=toolkit,
                             )
+                            messages = invocation_spec.transcript_seed.initial_messages
 
                             # Step 4: 执行 ReAct 循环（返回事件流）
                             user_task_prompt = json.dumps(
@@ -215,17 +196,19 @@ def llm_function(
                                 ensure_ascii=False,
                             )
 
-                            event_stream = await execute_react_loop(
+                            tool_param, tool_map = process_tools(toolkit, sig.func_name)
+                            event_stream = ReAct_loop(
                                 llm_interface=llm_interface,
                                 messages=messages,
-                                toolkit=toolkit,
+                                tools=tool_param,
+                                tool_map=tool_map,
                                 max_tool_calls=max_tool_calls,
-                                llm_kwargs=llm_kwargs,
-                                func_name=sig.func_name,
-                                enable_event=True,
+                                stream=False,
                                 trace_id=sig.trace_id,
                                 user_task_prompt=user_task_prompt,
                                 abort_signal=abort_signal,
+                                invocation_spec=invocation_spec,
+                                **llm_kwargs,
                             )
 
                             # Step 5: 处理事件流，解析响应后再 yield
@@ -244,15 +227,8 @@ def llm_function(
                             result: Optional[T] = None
 
                             # 解析和验证最终响应
-                            if last_response:
-                                result = parse_and_validate_response(
-                                    response=last_response,
-                                    return_type=sig.return_type,
-                                    func_name=sig.func_name,
-                                )
-
-                                # 存储结果到闭包变量，供外层使用
-                                parsed_result[0] = result
+                            if last_response is not None:
+                                result = process_response(last_response, sig.return_type)
 
                                 # Yield 解析后的响应（而不是原始的 LLM 响应）
                                 from SimpleLLMFunc.hooks.stream import ResponseYield
@@ -280,43 +256,37 @@ def llm_function(
                             )
                             raise
 
-        if enable_event:
-            # 事件模式：直接返回生成器
-            @wraps(func)
-            async def async_wrapper_event(
-                *args: Any, **kwargs: Any
-            ) -> AsyncGenerator[ReactOutput, None]:
-                async for output in _execute_function_with_events(*args, **kwargs):
-                    yield output
+        @wraps(func)
+        async def stream_wrapper(
+            *args: Any, **kwargs: Any
+        ) -> AsyncGenerator[ReactOutput, None]:
+            async for output in _execute_function_with_events(*args, **kwargs):
+                yield output
 
-            # Preserve original function metadata
-            async_wrapper_event.__name__ = func_name
-            async_wrapper_event.__doc__ = docstring
-            async_wrapper_event.__annotations__ = func.__annotations__
-            setattr(async_wrapper_event, "__signature__", signature)
+        @wraps(func)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> T:
+            final_result: Optional[T] = None
+            has_result = False
+            async for output in stream_wrapper(*args, **kwargs):
+                if is_response_yield(output):
+                    final_result = cast(T, output.response)
+                    has_result = True
 
-            return cast(
-                Callable[..., AsyncGenerator[ReactOutput, None]], async_wrapper_event
-            )
-        else:
-            # 非事件模式：消费生成器并返回最终结果
-            @wraps(func)
-            async def async_wrapper(*args: Any, **kwargs: Any) -> T:
-                # 消费事件流（内部会自动解析并存储结果到 parsed_result）
-                async for output in _execute_function_with_events(*args, **kwargs):
-                    pass  # 在非事件模式下，我们不关心事件，只要最终结果
-
-                # 返回内部已经解析好的结果（避免重复解析）
-                if parsed_result[0] is not None:
-                    return parsed_result[0]
-                else:
-                    raise ValueError("No response received from LLM")
+            if has_result:
+                return cast(T, final_result)
+            raise ValueError("No response received from LLM")
 
         # Preserve original function metadata
+        stream_wrapper.__name__ = func_name
+        stream_wrapper.__doc__ = docstring
+        stream_wrapper.__annotations__ = func.__annotations__
+        setattr(stream_wrapper, "__signature__", signature)
+
         async_wrapper.__name__ = func_name
         async_wrapper.__doc__ = docstring
         async_wrapper.__annotations__ = func.__annotations__
         setattr(async_wrapper, "__signature__", signature)
+        setattr(async_wrapper, "stream", stream_wrapper)
 
         return cast(Callable[..., Awaitable[T]], async_wrapper)
 

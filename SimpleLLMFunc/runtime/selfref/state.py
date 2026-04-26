@@ -17,16 +17,19 @@ from SimpleLLMFunc.base.messages import (
     validate_message_shape,
     validate_tool_linkage,
 )
+from SimpleLLMFunc.base.context_source import DataFromSelfRef
 from SimpleLLMFunc.base.react_hooks import ReActHookExecutionContext
 from SimpleLLMFunc.type.message import NormalizedMessageList, NormalizedMessageParam
 from SimpleLLMFunc.runtime.primitives import RuntimePrimitiveBackend
 from SimpleLLMFunc.runtime.selfref.context_ops import (
+    build_context_messages_from_selfref_data as _context_ops_build_context_messages_from_selfref_data,
     build_context_messages_from_state_data as _context_ops_build_context_messages_from_state_data,
     canonicalize_context_messages as _context_ops_canonicalize_context_messages,
     clone_messages as _context_ops_clone_messages,
     extract_latest_system_prompt as _context_ops_extract_latest_system_prompt,
     normalize_context_summary_payload as _context_ops_normalize_context_summary_payload,
     normalize_experience_text as _context_ops_normalize_experience_text,
+    parse_data_from_selfref as _context_ops_parse_data_from_selfref,
     parse_context_messages as _context_ops_parse_context_messages,
     remove_framework_injected_prompt_blocks as _context_ops_remove_framework_injected_prompt_blocks,
     render_context_compaction_summary,
@@ -60,10 +63,18 @@ def _parse_context_messages(messages: MemoryHistory) -> Dict[str, Any]:
     return _context_ops_parse_context_messages(messages)
 
 
+def _parse_data_from_selfref(messages: MemoryHistory) -> DataFromSelfRef:
+    return _context_ops_parse_data_from_selfref(messages)
+
+
 def _build_context_messages_from_state_data(
     context_state: Dict[str, Any],
 ) -> MemoryHistory:
     return _context_ops_build_context_messages_from_state_data(context_state)
+
+
+def _build_context_messages_from_selfref_data(data: DataFromSelfRef) -> MemoryHistory:
+    return _context_ops_build_context_messages_from_selfref_data(data)
 
 
 def _canonicalize_context_messages(messages: MemoryHistory) -> MemoryHistory:
@@ -620,6 +631,7 @@ class SelfReference(RuntimePrimitiveBackend):
     def __init__(self):
         self._lock = threading.RLock()
         self._history_store: Dict[str, MemoryHistory] = {}
+        self._source_store: Dict[str, DataFromSelfRef] = {}
         self._memory_proxy = SelfReferenceMemoryProxy(self)
         self._instance_proxy = SelfReferenceInstanceHandle(self)
         self._agent_instance: Optional[Any] = None
@@ -700,6 +712,7 @@ class SelfReference(RuntimePrimitiveBackend):
             self._pending_compactions.clear()
             self._pending_context_mutations.clear()
             self._history_store.clear()
+            self._source_store.clear()
             self._agent_instance = None
             self._agent_default_memory_key = None
             self._fork_counter = 0
@@ -839,6 +852,12 @@ class SelfReference(RuntimePrimitiveBackend):
 
         return _coerce_history_list(cast(List[Any], mapped_state.messages))
 
+    def _snapshot_active_history(self, key: str) -> Optional[MemoryHistory]:
+        active_messages = self._get_active_history_target(key)
+        if active_messages is None:
+            return None
+        return self._coerce_compiled_context_messages(active_messages)
+
     def mark_destructive_history_mutation(self, key: str) -> None:
         normalized_key = _normalize_key(key)
         with self._lock:
@@ -859,9 +878,15 @@ class SelfReference(RuntimePrimitiveBackend):
 
     def parse_context_state(self, key: str) -> Dict[str, Any]:
         normalized_key = _normalize_key(key)
-        messages = self.snapshot_history(normalized_key)
-        context_state = _parse_context_messages(messages)
-        context_state["messages"] = messages
+        source = self.snapshot_selfref_source(normalized_key)
+        context_state = {
+            "base_system_prompt": source.base_system_prompt,
+            "experiences": copy.deepcopy(source.experiences),
+            "summary": copy.deepcopy(source.summary),
+            "summary_message": copy.deepcopy(source.summary_message),
+            "working_messages": _clone_messages(cast(MemoryHistory, source.working_messages)),
+        }
+        context_state["messages"] = _build_context_messages_from_selfref_data(source)
         return context_state
 
     def compile_context_messages(
@@ -871,37 +896,27 @@ class SelfReference(RuntimePrimitiveBackend):
         include_summary: bool = True,
     ) -> MemoryHistory:
         normalized_key = _normalize_key(key)
-        context_state = self.parse_context_state(normalized_key)
-        compiled: MemoryHistory = []
-
-        rendered_system_prompt = _render_system_prompt_with_experiences(
-            cast(str, context_state["base_system_prompt"]),
-            cast(List[Dict[str, str]], context_state["experiences"]),
-        )
-        if rendered_system_prompt:
-            compiled.append({"role": "system", "content": rendered_system_prompt})
-
+        source = self.snapshot_selfref_source(normalized_key)
         if include_summary:
-            summary = context_state.get("summary")
-            summary_message = context_state.get("summary_message")
-            if isinstance(summary, dict):
-                compiled.append(
-                    {
-                        "role": "assistant",
-                        "content": render_context_compaction_summary(summary),
-                    }
-                )
-            elif isinstance(summary_message, dict):
-                compiled.append(copy.deepcopy(summary_message))
+            return _build_context_messages_from_selfref_data(source)
 
-        compiled.extend(
-            _clone_messages(cast(MemoryHistory, context_state["working_messages"]))
+        return _build_context_messages_from_selfref_data(
+            DataFromSelfRef(
+                base_system_prompt=source.base_system_prompt,
+                experiences=copy.deepcopy(source.experiences),
+                summary=None,
+                summary_message=None,
+                working_messages=cast(
+                    NormalizedMessageList,
+                    _clone_messages(cast(MemoryHistory, source.working_messages)),
+                ),
+            )
         )
-        return compiled
 
     def set_context_messages(self, key: str, messages: List[Dict[str, Any]]) -> None:
         normalized_key = _normalize_key(key)
         compiled = self._coerce_compiled_context_messages(messages)
+        source = _parse_data_from_selfref(compiled)
 
         active_messages = self._get_active_history_target(normalized_key)
         if active_messages is not None:
@@ -911,12 +926,14 @@ class SelfReference(RuntimePrimitiveBackend):
                 if normalized_key not in self._history_store:
                     raise KeyError(f"Memory key '{normalized_key}' is not bound")
                 self._history_store[normalized_key] = _clone_messages(active_messages)
+                self._source_store[normalized_key] = source
             return
 
         with self._lock:
             if normalized_key not in self._history_store:
                 raise KeyError(f"Memory key '{normalized_key}' is not bound")
             self._history_store[normalized_key] = compiled
+            self._source_store[normalized_key] = source
 
     def _coerce_compiled_context_messages(
         self,
@@ -939,7 +956,11 @@ class SelfReference(RuntimePrimitiveBackend):
         return _canonicalize_context_messages(normalized_messages)
 
     def snapshot_context_messages(self, key: str) -> MemoryHistory:
-        return self.compile_context_messages(key)
+        normalized_key = _normalize_key(key)
+        active_messages = self._snapshot_active_history(normalized_key)
+        if active_messages is not None:
+            return active_messages
+        return self.compile_context_messages(normalized_key)
 
     def list_context_experiences(self, key: str) -> List[Dict[str, str]]:
         context_state = self.parse_context_state(key)
@@ -1099,13 +1120,38 @@ class SelfReference(RuntimePrimitiveBackend):
             history,
             validate_working_linkage=False,
         )
+        source = _parse_data_from_selfref(normalized_history)
         with self._lock:
             self._history_store[normalized_key] = normalized_history
+            self._source_store[normalized_key] = source
+
+    def store_history(self, key: str, messages: List[Dict[str, Any]]) -> MemoryHistory:
+        normalized_key = _normalize_key(key)
+        normalized_history = self._coerce_compiled_context_messages(messages)
+        source = _parse_data_from_selfref(normalized_history)
+        with self._lock:
+            if normalized_key not in self._history_store:
+                raise KeyError(f"Memory key '{normalized_key}' is not bound")
+            self._history_store[normalized_key] = _clone_messages(normalized_history)
+            self._source_store[normalized_key] = source
+        return _clone_messages(normalized_history)
+
+    def snapshot_selfref_source(self, key: str) -> DataFromSelfRef:
+        normalized_key = _normalize_key(key)
+        with self._lock:
+            if normalized_key not in self._source_store:
+                if normalized_key not in self._history_store:
+                    raise KeyError(f"Memory key '{normalized_key}' is not bound")
+                self._source_store[normalized_key] = _parse_data_from_selfref(
+                    self._history_store[normalized_key]
+                )
+            return copy.deepcopy(self._source_store[normalized_key])
 
     def unbind_history(self, key: str) -> None:
         normalized_key = _normalize_key(key)
         with self._lock:
             self._history_store.pop(normalized_key, None)
+            self._source_store.pop(normalized_key, None)
 
     def list_history_keys(self) -> List[str]:
         with self._lock:
@@ -1120,9 +1166,9 @@ class SelfReference(RuntimePrimitiveBackend):
 
     def snapshot_history(self, key: str) -> MemoryHistory:
         normalized_key = _normalize_key(key)
-        active_messages = self._get_active_history_target(normalized_key)
+        active_messages = self._snapshot_active_history(normalized_key)
         if active_messages is not None:
-            return _clone_messages(active_messages)
+            return active_messages
 
         with self._lock:
             if normalized_key not in self._history_store:
@@ -1176,10 +1222,11 @@ class SelfReference(RuntimePrimitiveBackend):
         merged.extend(_clone_messages(updated_history_dicts[tail_start:]))
 
         if commit:
+            canonicalized = _coerce_history_list(_canonicalize_context_messages(merged))
+            source = _parse_data_from_selfref(canonicalized)
             with self._lock:
-                self._history_store[normalized_key] = _coerce_history_list(
-                    _canonicalize_context_messages(merged)
-                )
+                self._history_store[normalized_key] = canonicalized
+                self._source_store[normalized_key] = source
 
         return merged
 
@@ -1196,6 +1243,7 @@ class SelfReference(RuntimePrimitiveBackend):
         normalized_messages = self._coerce_compiled_context_messages(
             normalized_messages
         )
+        source = _parse_data_from_selfref(normalized_messages)
 
         active_messages = self._get_active_history_target(normalized_key)
         if active_messages is not None:
@@ -1206,12 +1254,16 @@ class SelfReference(RuntimePrimitiveBackend):
                 if normalized_key not in self._history_store:
                     raise KeyError(f"Memory key '{normalized_key}' is not bound")
                 self._history_store[normalized_key] = _clone_messages(active_messages)
+                self._source_store[normalized_key] = _parse_data_from_selfref(
+                    cast(MemoryHistory, active_messages)
+                )
             return
 
         with self._lock:
             if normalized_key not in self._history_store:
                 raise KeyError(f"Memory key '{normalized_key}' is not bound")
             self._history_store[normalized_key] = normalized_messages
+            self._source_store[normalized_key] = source
 
     def append_message(self, key: str, message: Dict[str, Any]) -> None:
         self._mutate_messages(key, lambda msgs: msgs.append(copy.deepcopy(message)))
@@ -1802,10 +1854,12 @@ class SelfReference(RuntimePrimitiveBackend):
             _validate_history_for_memory_methods(working_messages)
             active_messages.clear()
             active_messages.extend(working_messages)
+            source = _parse_data_from_selfref(cast(MemoryHistory, active_messages))
             with self._lock:
                 if normalized_key not in self._history_store:
                     raise KeyError(f"Memory key '{normalized_key}' is not bound")
                 self._history_store[normalized_key] = _clone_messages(active_messages)
+                self._source_store[normalized_key] = source
             return
 
         with self._lock:
@@ -1816,9 +1870,11 @@ class SelfReference(RuntimePrimitiveBackend):
         mutator(messages)
         messages = _clone_messages(messages)
         _validate_history_for_memory_methods(messages)
+        source = _parse_data_from_selfref(messages)
 
         with self._lock:
             self._history_store[normalized_key] = messages
+            self._source_store[normalized_key] = source
 
 
 __all__ = [

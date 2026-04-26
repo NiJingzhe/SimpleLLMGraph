@@ -10,32 +10,22 @@ from typing import (
     List,
     Optional,
     ParamSpec,
-    Sequence,
-    Tuple,
     TypeVar,
     Union,
     cast,
     Literal,
 )
 
-from SimpleLLMFunc.llm_decorator.steps.common import (
-    parse_function_signature,
-    setup_log_context,
-)
-from SimpleLLMFunc.llm_decorator.steps.chat import (
-    build_chat_messages,
-    execute_react_loop_streaming,
-    process_chat_response_stream,
-)
-from SimpleLLMFunc.llm_decorator.selfref_sync import (
-    build_selfref_react_sync_hooks,
-)
-from SimpleLLMFunc.llm_decorator.steps.chat.message import HISTORY_PARAM_NAMES
+from SimpleLLMFunc.base.ReAct import ReAct_loop
+from SimpleLLMFunc.llm_decorator.signature import parse_function_signature, setup_log_context
+from SimpleLLMFunc.llm_decorator.invocation_builder import build_chat_invocation_spec
+from SimpleLLMFunc.runtime.selfref.session import SelfRefSession
+from SimpleLLMFunc.llm_decorator.prompt_contract import HISTORY_PARAM_NAMES
 from SimpleLLMFunc.llm_decorator.utils import (
-    append_tool_best_practices_prompt_to_messages,
-    collect_tool_prompt_specs,
+    process_tools,
     remove_tool_best_practices_prompt_block,
 )
+from SimpleLLMFunc.base.context_source import CompileSource, DataFromAgentConfig
 from SimpleLLMFunc.interface.llm_interface import LLM_Interface
 from SimpleLLMFunc.runtime.selfref.state import (
     MemoryHistory,
@@ -43,10 +33,12 @@ from SimpleLLMFunc.runtime.selfref.state import (
     SELF_REFERENCE_TOOLKIT_OVERRIDE_TEMPLATE_PARAM,
     SelfReference,
 )
+from SimpleLLMFunc.runtime.selfref.state import _coerce_history_list
+from SimpleLLMFunc.runtime.selfref.context_ops import parse_data_from_selfref
 from SimpleLLMFunc.tool import Tool
 from SimpleLLMFunc.type import HistoryList, MessageList, NormalizedMessageParam
 from SimpleLLMFunc.hooks.events import ReactEndEvent
-from SimpleLLMFunc.hooks.stream import ReactOutput, is_event_yield
+from SimpleLLMFunc.hooks.stream import ReactOutput, ResponseYield, is_event_yield
 from SimpleLLMFunc.hooks.abort import AbortSignal, ABORT_SIGNAL_PARAM
 from SimpleLLMFunc.observability.langfuse_client import (
     coerce_langfuse_metadata,
@@ -409,20 +401,46 @@ def _react_end_event_has_fork_origin(event: ReactEndEvent, origin: Any) -> bool:
     return isinstance(raw_fork_id, str) and bool(raw_fork_id)
 
 
+def _finalize_self_reference_history(
+    self_reference: SelfReference,
+    memory_key: str,
+    history: MemoryHistory,
+    *,
+    baseline_history_count: int,
+    base_system_prompt: str,
+) -> MemoryHistory:
+    resolved_history = cast(MemoryHistory, _coerce_history_list(history))
+    resolved_source = parse_data_from_selfref(resolved_history)
+    if (
+        resolved_source.experiences
+        or resolved_source.summary is not None
+        or resolved_source.summary_message is not None
+    ):
+        return self_reference.store_history(memory_key, resolved_history)
+
+    self_reference.consume_destructive_history_mutation(memory_key)
+    resolved_history = self_reference.merge_turn_history(
+        key=memory_key,
+        baseline_history_count=baseline_history_count,
+        updated_history=resolved_history,
+        commit=True,
+    )
+    return self_reference.store_history(memory_key, resolved_history)
+
+
 def llm_chat(
     llm_interface: LLM_Interface,
     toolkit: Optional[ToolkitList] = None,
     max_tool_calls: Optional[int] = DEFAULT_MAX_TOOL_CALLS,
     stream: bool = False,
     return_mode: Literal["text", "raw"] = "text",
-    enable_event: bool = False,
     strict_signature: bool = False,
     self_reference: Optional[SelfReference] = None,
     self_reference_key: Optional[str] = None,
     **llm_kwargs: Any,
 ) -> Callable[
     [Union[Callable[P, Any], Callable[P, Awaitable[Any]]]],
-    Callable[P, AsyncGenerator[Union[Tuple[Any, HistoryList], ReactOutput], None]],
+    Callable[P, AsyncGenerator[ReactOutput, None]],
 ]:
     """
     Async LLM chat decorator for implementing asynchronous conversational interactions with
@@ -464,10 +482,9 @@ def llm_chat(
 
     ## Return Value Format
     ```python
-    AsyncGenerator[Tuple[str, List[Dict[str, str]]], None]
+    AsyncGenerator[ReactOutput, None]
     ```
-    - `str`: Assistant's response content
-    - `List[Dict[str, str]]`: Filtered conversation history (excluding tool call information)
+    Each output is either `EventYield` or `ResponseYield`.
 
     Args:
         llm_interface: LLM interface instance for communicating with the language model
@@ -478,9 +495,6 @@ def llm_chat(
         return_mode: Return mode, either "text" or "raw" (default: "text")
             - "text" mode: returns response as string, history as List[Dict[str, str]]
             - "raw" mode: returns raw OAI API response, history as List[Dict[str, str]]
-        enable_event: Whether to enable event stream (default: False)
-            - False: yields (response, messages) tuples (backward compatible)
-            - True: yields ReactOutput (ResponseYield or EventYield)
         strict_signature: Compatibility option (default: False). When True, enforce
             canonical agent signature `agent(history, message: str, ...)` (see docstring).
         self_reference: Optional SelfReference shared object for agent self-referential
@@ -494,8 +508,7 @@ def llm_chat(
         **llm_kwargs: Additional keyword arguments passed directly to the LLM interface
 
     Returns:
-        Decorated async generator function that yields (response_content, updated_history) tuples
-        or ReactOutput when enable_event=True
+        Decorated async generator function that yields ReactOutput.
 
     Example:
         ```python
@@ -504,14 +517,14 @@ def llm_chat(
             '''System prompt information'''
             pass
 
-        async for response, updated_history in chat_with_llm("Hello", history=[]):
-            print(response)
+        async for output in chat_with_llm("Hello", history=[]):
+            print(output)
         ```
     """
 
     def decorator(
         func: Union[Callable[P, Any], Callable[P, Awaitable[Any]]],
-    ) -> Callable[P, AsyncGenerator[Union[Tuple[Any, HistoryList], ReactOutput], None]]:
+    ) -> Callable[P, AsyncGenerator[ReactOutput, None]]:
         if strict_signature:
             signature = inspect.signature(func)
             parameters = list(signature.parameters.values())
@@ -657,7 +670,6 @@ def llm_chat(
                                 "max_tool_calls": max_tool_calls,
                                 "stream": stream,
                                 "return_mode": return_mode,
-                                "enable_event": enable_event,
                                 "self_reference_enabled": (
                                     effective_self_reference is not None
                                 ),
@@ -742,181 +754,163 @@ def llm_chat(
                                         )
                                     )
 
-                                # Step 3: 构建聊天消息
-                                messages = build_chat_messages(
-                                    signature=function_signature,
-                                    toolkit=runtime_toolkit,
-                                    exclude_params=HISTORY_PARAM_NAMES,
-                                    template_params=template_params,
-                                )
-
-                                tool_prompt_specs = collect_tool_prompt_specs(
-                                    runtime_toolkit,
-                                    context={
-                                        "self_reference_key": resolved_self_reference_key,
-                                    },
-                                )
-                                append_tool_best_practices_prompt_to_messages(
-                                    messages,
-                                    tool_prompt_specs,
-                                )
-                                _append_must_principles_prompt_to_messages(messages)
-
+                                # Step 3: 构建 invocation spec 与 selfref session
+                                selfref_session = None
                                 if (
                                     effective_self_reference is not None
                                     and resolved_self_reference_key is not None
                                 ):
+                                    selfref_session = SelfRefSession(
+                                        backend=effective_self_reference,
+                                        memory_key=resolved_self_reference_key,
+                                        template_params=template_params,
+                                        runtime_toolkit=runtime_toolkit,
+                                        raw_history_reference=raw_history_reference,
+                                        agent_instance=wrapper,
+                                    )
+                                    selfref_session.history_authority = (
+                                        "external"
+                                        if raw_history_reference is not None
+                                        else (
+                                            "selfref"
+                                            if effective_self_reference.has_history(
+                                                resolved_self_reference_key
+                                            )
+                                            else "seed"
+                                        )
+                                    )
+                                    selfref_session.baseline_history_count = baseline_history_count
+
+                                invocation_spec = build_chat_invocation_spec(
+                                    signature=function_signature,
+                                    template_params=template_params,
+                                    llm_kwargs=llm_kwargs,
+                                    stream=stream,
+                                    return_mode=return_mode,
+                                    runtime_toolkit=runtime_toolkit,
+                                    selfref_session=selfref_session,
+                                    raw_history_reference=raw_history_reference,
+                                )
+                                messages = invocation_spec.transcript_seed.initial_messages
+                                # Compatibility payload for existing step tests / patched runners.
+                                # The formal LLM conversion still uses invocation_spec -> compile_pipeline.
+                                compile_source = CompileSource(
+                                    data_from_agent_config=DataFromAgentConfig(
+                                        base_system_prompt=invocation_spec.prompt_contract.base_instruction,
+                                        template_params=(
+                                            dict(invocation_spec.template_params)
+                                            if invocation_spec.template_params is not None
+                                            else None
+                                        ),
+                                        tool_prompt_specs=list(invocation_spec.prompt_contract.tool_prompt_specs),
+                                        include_must_principles=invocation_spec.prompt_contract.include_must_principles,
+                                    ),
+                                    data_from_selfref=invocation_spec.data_from_selfref,
+                                    input_messages=invocation_spec.transcript_seed.initial_messages,
+                                )
+
+                                if selfref_session is not None:
                                     _seed_self_reference_system_prompt_if_missing(
                                         effective_self_reference,
                                         resolved_self_reference_key,
                                         messages,
                                     )
-
-                                if (
-                                    effective_self_reference is not None
-                                    and resolved_self_reference_key is not None
-                                ):
-                                    react_hooks = build_selfref_react_sync_hooks(
-                                        self_reference=effective_self_reference,
-                                        memory_key=resolved_self_reference_key,
-                                    )
+                                    react_hooks = selfref_session
 
                                 # Step 4: 执行 ReAct 循环（流式）
-                                response_stream = execute_react_loop_streaming(
+                                tool_param, tool_map = process_tools(
+                                    runtime_toolkit,
+                                    function_signature.func_name,
+                                )
+                                response_stream = ReAct_loop(
                                     llm_interface=llm_interface,
                                     messages=messages,
-                                    toolkit=runtime_toolkit,
+                                    compile_source=compile_source,
+                                    tools=tool_param,
+                                    tool_map=tool_map,
                                     max_tool_calls=max_tool_calls,
                                     stream=stream,
-                                    llm_kwargs=llm_kwargs,
-                                    func_name=function_signature.func_name,
-                                    enable_event=enable_event,
                                     trace_id=function_signature.trace_id,
                                     user_task_prompt=user_task_prompt,
                                     abort_signal=abort_signal,
                                     hooks=react_hooks,
+                                    invocation_spec=invocation_spec,
+                                    toolkit=runtime_toolkit,
+                                    **llm_kwargs,
                                 )
 
                                 collected_responses = []
                                 final_history = None
 
-                                if enable_event:
-                                    # 事件模式：直接 yield ReactOutput
-                                    typed_event_stream = cast(
-                                        AsyncGenerator[ReactOutput, None],
-                                        response_stream,
-                                    )
-                                    async for output in typed_event_stream:
+                                typed_event_stream = cast(
+                                    AsyncGenerator[ReactOutput, None],
+                                    response_stream,
+                                )
+                                async for raw_output in typed_event_stream:
+                                    if isinstance(raw_output, tuple):
+                                        raw_response, history = raw_output
+                                        output = ResponseYield(
+                                            type="response",
+                                            response=raw_response,
+                                            messages=cast(MessageList, history),
+                                        )
                                         if (
                                             effective_self_reference is not None
                                             and resolved_self_reference_key is not None
-                                            and is_event_yield(output)
-                                            and isinstance(output.event, ReactEndEvent)
-                                            and not _react_end_event_has_fork_origin(
-                                                output.event,
-                                                output.origin,
-                                            )
                                         ):
-                                            if (
-                                                effective_self_reference._get_active_react_state()
-                                                is not None
-                                            ):
-                                                active_history: MemoryHistory = effective_self_reference.snapshot_context_messages(
-                                                    resolved_self_reference_key
-                                                )
-                                            else:
-                                                active_history = effective_self_reference.merge_turn_history(
-                                                    key=resolved_self_reference_key,
-                                                    baseline_history_count=baseline_history_count,
-                                                    updated_history=cast(MemoryHistory, output.event.final_messages),
-                                                    commit=True,
-                                                )
-                                                compacted_history = effective_self_reference.commit_pending_compaction(
-                                                    resolved_self_reference_key,
-                                                    active_history,
-                                                )
-                                                if compacted_history is not None:
-                                                    active_history[:] = (
-                                                        compacted_history
-                                                    )
-                                            output.event.final_messages = cast(HistoryList, cast(List[NormalizedMessageParam], active_history))
+                                            active_history = _finalize_self_reference_history(
+                                                effective_self_reference,
+                                                resolved_self_reference_key,
+                                                cast(MemoryHistory, history),
+                                                baseline_history_count=baseline_history_count,
+                                                base_system_prompt=(
+                                                    compile_source.data_from_agent_config.base_system_prompt
+                                                    if compile_source is not None
+                                                    else ""
+                                                ),
+                                            )
+                                            output.messages = cast(MessageList, active_history)
+                                            final_history = cast(HistoryList, cast(List[NormalizedMessageParam], active_history))
                                             if raw_history_reference is not None:
                                                 raw_history_reference[:] = cast(List[Dict[str, Any]], active_history)
-
-                                        yield output
-                                else:
-                                    # 向后兼容模式：处理响应流
-                                    # 类型断言：当 enable_event=False 时，response_stream 只包含 Tuple[Any, MessageList]
-                                    typed_response_stream = cast(
-                                        AsyncGenerator[Tuple[Any, MessageList], None],
-                                        response_stream,
-                                    )
-                                    latest_merged_history: Optional[MemoryHistory] = None
-                                    async for (
-                                        content,
-                                        history,
-                                    ) in process_chat_response_stream(
-                                        response_stream=typed_response_stream,
-                                        return_mode=return_mode,
-                                        messages=messages,
-                                        func_name=function_signature.func_name,
-                                        stream=stream,
-                                    ):
-                                        history_to_yield: HistoryList = cast(HistoryList, history)
-                                        if (
-                                            effective_self_reference is not None
-                                            and resolved_self_reference_key is not None
-                                        ):
-                                            if (
-                                                effective_self_reference._get_active_react_state()
-                                                is not None
-                                            ):
-                                                active_history = effective_self_reference.snapshot_history(
-                                                    resolved_self_reference_key
-                                                )
-                                            else:
-                                                active_history = effective_self_reference.merge_turn_history(
-                                                    key=resolved_self_reference_key,
-                                                    baseline_history_count=baseline_history_count,
-                                                    updated_history=cast(MemoryHistory, history),
-                                                    commit=False,
-                                                )
-                                            history_to_yield = cast(HistoryList, cast(List[NormalizedMessageParam], active_history))
-                                            latest_merged_history = active_history
-
-                                        collected_responses.append(content)
-                                        final_history = history_to_yield
-                                        yield content, history_to_yield
+                                    else:
+                                        output = raw_output
 
                                     if (
                                         effective_self_reference is not None
                                         and resolved_self_reference_key is not None
-                                        and latest_merged_history is not None
-                                    ):
-                                        compacted_history = effective_self_reference.commit_pending_compaction(
-                                            resolved_self_reference_key,
-                                            latest_merged_history,
+                                        and is_event_yield(output)
+                                        and isinstance(output.event, ReactEndEvent)
+                                        and not _react_end_event_has_fork_origin(
+                                            output.event,
+                                            output.origin,
                                         )
-                                        if compacted_history is not None:
-                                            latest_merged_history[:] = cast(List[Dict[str, Any]], compacted_history)
-                                        else:
-                                            effective_self_reference.set_context_messages(
-                                                key=resolved_self_reference_key,
-                                                messages=cast(MemoryHistory, latest_merged_history),
-                                            )
+                                    ):
+                                        active_history = _finalize_self_reference_history(
+                                            effective_self_reference,
+                                            resolved_self_reference_key,
+                                            cast(MemoryHistory, output.event.final_messages),
+                                            baseline_history_count=baseline_history_count,
+                                            base_system_prompt=(
+                                                compile_source.data_from_agent_config.base_system_prompt
+                                                if compile_source is not None
+                                                else ""
+                                            ),
+                                        )
+                                        output.event.final_messages = cast(HistoryList, cast(List[NormalizedMessageParam], active_history))
+                                        final_history = cast(HistoryList, cast(List[NormalizedMessageParam], active_history))
                                         if raw_history_reference is not None:
-                                            raw_history_reference[:] = cast(List[Dict[str, Any]], latest_merged_history)
-                                        final_history = cast(HistoryList, cast(List[NormalizedMessageParam], latest_merged_history))
+                                            raw_history_reference[:] = cast(List[Dict[str, Any]], active_history)
 
-                                # 更新 Langfuse span（仅在非事件模式或收集到响应时）
-                                if not enable_event or collected_responses:
-                                    chat_span.update(
-                                        output={
-                                            "responses": collected_responses,
-                                            "final_history": final_history,
-                                            "total_responses": len(collected_responses),
-                                        },
-                                    )
+                                    yield output
+
+                                chat_span.update(
+                                    output={
+                                        "responses": collected_responses,
+                                        "final_history": final_history,
+                                        "total_responses": len(collected_responses),
+                                    },
+                                )
                             except Exception as exc:
                                 # 更新 span 错误信息
                                 chat_span.update(
@@ -997,12 +991,7 @@ def llm_chat(
                 default_memory_key=resolved_default_self_reference_key,
             )
 
-        return cast(
-            Callable[
-                P, AsyncGenerator[Union[Tuple[Any, HistoryList], ReactOutput], None]
-            ],
-            wrapper,
-        )
+        return cast(Callable[P, AsyncGenerator[ReactOutput, None]], wrapper)
 
     return decorator
 

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import copy
 from typing import Any, Dict, List, Optional, cast
 
+from SimpleLLMFunc.base.context_source import DataFromSelfRef
 from SimpleLLMFunc.base.messages.assistant import (
     build_assistant_response_message,
     build_assistant_tool_message,
@@ -29,67 +30,18 @@ from SimpleLLMFunc.type.message import NormalizedMessageList, NormalizedMessageP
 @dataclass
 class ContextState:
     messages: NormalizedMessageList
+    data_from_selfref: Optional[DataFromSelfRef] = None
     pending_mutations: List[ContextMutation] = field(default_factory=list)
 
 
 @dataclass
 class CompiledContext:
-    llm_messages: NormalizedMessageList
-    semantic_messages: NormalizedMessageList
+    messages: NormalizedMessageList
+    data_from_selfref: Optional[DataFromSelfRef] = None
 
 
 def clone_messages(messages: NormalizedMessageList) -> NormalizedMessageList:
     return [copy.deepcopy(message) for message in messages]
-
-
-def assistant_tool_calls_are_resolved(
-    messages: NormalizedMessageList,
-    start_index: int,
-    tool_call_ids: List[str],
-) -> bool:
-    pending = set(tool_call_ids)
-    for message in messages[start_index + 1 :]:
-        if not pending:
-            return True
-        if not isinstance(message, dict):
-            continue
-        role = message.get("role")
-        if role == "tool":
-            tool_call_id = message.get("tool_call_id")
-            if isinstance(tool_call_id, str):
-                pending.discard(tool_call_id)
-            continue
-        if role == "assistant":
-            break
-    return not pending
-
-
-def compile_semantic_messages(messages: NormalizedMessageList) -> NormalizedMessageList:
-    compiled: NormalizedMessageList = []
-    for index, message in enumerate(messages):
-        if not isinstance(message, dict):
-            compiled.append(copy.deepcopy(message))
-            continue
-        if message.get("role") != "assistant":
-            compiled.append(copy.deepcopy(message))
-            continue
-        tool_calls = message.get("tool_calls")
-        if not isinstance(tool_calls, list) or not tool_calls:
-            compiled.append(copy.deepcopy(message))
-            continue
-        tool_call_ids = [
-            tool_call.get("id")
-            for tool_call in tool_calls
-            if isinstance(tool_call, dict) and isinstance(tool_call.get("id"), str)
-        ]
-        if tool_call_ids and assistant_tool_calls_are_resolved(
-            messages,
-            index,
-            cast(List[str], tool_call_ids),
-        ):
-            continue
-        compiled.append(copy.deepcopy(message))
-    return compiled
 
 
 def _build_cancelled_assistant_tool_message(
@@ -245,6 +197,7 @@ def apply_mutations(
                 current.append(
                     build_assistant_tool_message(
                         mutation.tool_calls,
+                        mutation.content,
                         mutation.reasoning_details or None,
                     )
                 )
@@ -283,18 +236,22 @@ def compile_context(
     mutations: Optional[List[ContextMutation]] = None,
 ) -> CompiledContext:
     applied_messages = apply_mutations(state.messages, mutations or state.pending_mutations)
-    return CompiledContext(
-        llm_messages=clone_messages(applied_messages),
-        semantic_messages=compile_semantic_messages(applied_messages),
-    )
+
+    if state.data_from_selfref is not None:
+        from SimpleLLMFunc.runtime.selfref.context_ops import parse_data_from_selfref
+
+        return CompiledContext(
+            messages=clone_messages(applied_messages),
+            data_from_selfref=parse_data_from_selfref(cast(List[Dict[str, Any]], applied_messages)),
+        )
+
+    return CompiledContext(messages=clone_messages(applied_messages))
 
 
 __all__ = [
     "CompiledContext",
     "ContextState",
     "apply_mutations",
-    "assistant_tool_calls_are_resolved",
     "clone_messages",
     "compile_context",
-    "compile_semantic_messages",
 ]

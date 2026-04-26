@@ -39,7 +39,7 @@ from SimpleLLMFunc.runtime.selfref import (
     SelfReference,
 )
 from SimpleLLMFunc.hooks.events import ReActEventType, ReactEndEvent
-from SimpleLLMFunc.hooks.stream import EventOrigin, EventYield, ReactOutput
+from SimpleLLMFunc.hooks.stream import EventOrigin, EventYield, ReactOutput, is_response_yield
 from SimpleLLMFunc.llm_decorator.llm_chat_decorator import (
     DEFAULT_MAX_TOOL_CALLS,
     llm_chat,
@@ -288,6 +288,39 @@ def _make_tool_call_completion(
     )
 
 
+def _make_tool_call_completion_with_content(
+    tool_name: str,
+    arguments: Dict[str, Any],
+    *,
+    content: Optional[str],
+) -> ChatCompletion:
+    tool_call = ChatCompletionMessageToolCall(
+        id="call_execute_code",
+        function=Function(
+            name=tool_name,
+            arguments=json.dumps(arguments, ensure_ascii=False),
+        ),
+        type="function",
+    )
+    message = ChatCompletionMessage(
+        role="assistant",
+        content=content,
+        tool_calls=[tool_call],
+    )
+    choice = Choice(
+        finish_reason="tool_calls",
+        index=0,
+        message=message,
+    )
+    return ChatCompletion(
+        id="test-tool-call-content",
+        choices=[choice],
+        created=1234567890,
+        model="test-model",
+        object="chat.completion",
+    )
+
+
 def test_llm_chat_binds_wrapped_agent_instance_to_self_reference() -> None:
     """SelfReference should mount the decorated callable for recursive fork use."""
 
@@ -360,13 +393,16 @@ async def test_llm_chat_auto_resolves_builtin_self_reference_from_pyrepl() -> No
     """Decorator should pick up the builtin selfref pack from a default PyRepl."""
 
     captured_system_prompt: str | None = None
+    captured_compile_source: Any = None
 
     async def fake_execute_react_loop_streaming(
         *args: Any, **kwargs: Any
     ) -> AsyncGenerator[tuple[str, list[dict[str, Any]]], None]:
         nonlocal captured_system_prompt
+        nonlocal captured_compile_source
         _ = args
 
+        captured_compile_source = kwargs.get("compile_source")
         messages = kwargs["messages"]
         if messages:
             maybe_prompt = messages[0].get("content")
@@ -395,12 +431,8 @@ async def test_llm_chat_auto_resolves_builtin_self_reference_from_pyrepl() -> No
 
     with (
         patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.execute_react_loop_streaming",
+            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.ReAct_loop",
             new=fake_execute_react_loop_streaming,
-        ),
-        patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.process_chat_response_stream",
-            new=passthrough_process_chat_response_stream,
         ),
         patch(
             "SimpleLLMFunc.llm_decorator.llm_chat_decorator.langfuse_client.start_as_current_observation",
@@ -417,57 +449,22 @@ async def test_llm_chat_auto_resolves_builtin_self_reference_from_pyrepl() -> No
             agent("hello", history=history),
         )
 
-        async for _content, _history in stream:
+        async for _output in stream:
             pass
 
     assert isinstance(self_reference, SelfReference)
     assert self_reference.get_agent_instance() is agent
     assert self_reference.list_history_keys() == ["agent"]
     assert repl.namespace.get("self_reference") is None
+    assert captured_compile_source is not None
+    assert captured_compile_source.data_from_agent_config.base_system_prompt == "test agent"
+    assert captured_compile_source.data_from_agent_config.include_must_principles is True
+    assert any(
+        spec.get("name") == "execute_code"
+        for spec in captured_compile_source.data_from_agent_config.tool_prompt_specs
+    )
     assert captured_system_prompt is not None
-    assert "[Runtime Primitive Contract]" not in captured_system_prompt
-    assert "<tool_best_practices>" in captured_system_prompt
-    assert "execute_code" in captured_system_prompt
-    assert "<runtime_primitive_contract>" in captured_system_prompt
-    assert "Installed primitive packs:" in captured_system_prompt
-    assert "- selfref:" in captured_system_prompt
-    assert captured_system_prompt.count("runtime.list_primitives()") == 1
-    assert (
-        captured_system_prompt.count("runtime.list_primitives(contains='<namespace>.')")
-        == 1
-    )
-    assert captured_system_prompt.count("runtime.get_primitive_spec(name)") == 1
-    assert (
-        captured_system_prompt.count("runtime.list_primitive_specs(contains='...')")
-        == 1
-    )
-    assert _MUST_PROMPT_BLOCK in captured_system_prompt
-    assert _MUST_PROMPT_RULE in captured_system_prompt
-    assert "Active selfref key: agent" in captured_system_prompt
-    assert (
-        "Use assistant content for natural-language reasoning and final responses."
-        in captured_system_prompt
-    )
-    assert (
-        "Keep tool invocation payloads in the native tool channel."
-        in captured_system_prompt
-    )
-    assert captured_system_prompt.index(
-        "<tool_best_practices>"
-    ) < captured_system_prompt.index("test agent")
-    assert captured_system_prompt.rfind(
-        _MUST_PROMPT_BLOCK
-    ) > captured_system_prompt.index("test agent")
-    assert (
-        "You can use the following tools flexibly according to the real case and tool description:"
-        not in captured_system_prompt
-    )
-    assert (
-        "For fork results, read status/response/result/memory_key/history_count first; if status is error, inspect error_type/error_message before retrying."
-        not in captured_system_prompt
-    )
-    assert "Mounted primitive summary:" not in captured_system_prompt
-    assert "Use memory key" not in captured_system_prompt
+    assert captured_system_prompt == "test agent"
 
 
 @pytest.mark.asyncio
@@ -476,13 +473,16 @@ async def test_llm_chat_auto_resolves_self_reference_from_pyrepl_backend() -> No
 
     history: list[dict[str, Any]] = [{"role": "user", "content": "seed"}]
     captured_system_prompt: str | None = None
+    captured_compile_source: Any = None
 
     async def fake_execute_react_loop_streaming(
         *args: Any, **kwargs: Any
     ) -> AsyncGenerator[tuple[str, list[dict[str, Any]]], None]:
         nonlocal captured_system_prompt
+        nonlocal captured_compile_source
         _ = args
 
+        captured_compile_source = kwargs.get("compile_source")
         messages = kwargs["messages"]
         if messages:
             maybe_prompt = messages[0].get("content")
@@ -510,12 +510,8 @@ async def test_llm_chat_auto_resolves_self_reference_from_pyrepl_backend() -> No
 
     with (
         patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.execute_react_loop_streaming",
+            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.ReAct_loop",
             new=fake_execute_react_loop_streaming,
-        ),
-        patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.process_chat_response_stream",
-            new=passthrough_process_chat_response_stream,
         ),
         patch(
             "SimpleLLMFunc.llm_decorator.llm_chat_decorator.langfuse_client.start_as_current_observation",
@@ -532,43 +528,16 @@ async def test_llm_chat_auto_resolves_self_reference_from_pyrepl_backend() -> No
             agent("hello", history=history),
         )
 
-        async for _content, _history in stream:
+        async for _output in stream:
             pass
 
     assert self_reference.get_agent_instance() is agent
     assert self_reference.list_history_keys() == ["agent"]
+    assert captured_compile_source is not None
+    assert captured_compile_source.data_from_agent_config.base_system_prompt == "test agent"
+    assert captured_compile_source.data_from_agent_config.include_must_principles is True
     assert captured_system_prompt is not None
-    assert "[Runtime Primitive Contract]" not in captured_system_prompt
-    assert "<tool_best_practices>" in captured_system_prompt
-    assert "<runtime_primitive_contract>" in captured_system_prompt
-    assert captured_system_prompt.count("runtime.get_primitive_spec(name)") == 1
-    assert (
-        "keep prompt context focused on the selected primitives"
-        in captured_system_prompt
-    )
-    assert "Installed primitive packs:" in captured_system_prompt
-    assert "- selfref:" in captured_system_prompt
-    assert captured_system_prompt.count("selfref = your agent context") == 1
-    assert (
-        "Summarize the selected result fields in chat responses."
-        in captured_system_prompt
-    )
-    assert (
-        "Treat runtime.selfref.fork.gather_all results as dict[fork_id -> ForkResult] and iterate with .items() or .values()."
-        in captured_system_prompt
-    )
-    assert _MUST_PROMPT_BLOCK in captured_system_prompt
-    assert _MUST_PROMPT_RULE in captured_system_prompt
-    assert "Active selfref key: agent" in captured_system_prompt
-    assert (
-        "You can use the following tools flexibly according to the real case and tool description:"
-        not in captured_system_prompt
-    )
-    assert (
-        "For fork results, read status/response/result/memory_key/history_count first; if status is error, inspect error_type/error_message before retrying."
-        not in captured_system_prompt
-    )
-    assert "Mounted primitive summary:" not in captured_system_prompt
+    assert captured_system_prompt == "test agent"
 
 
 @pytest.mark.asyncio
@@ -618,12 +587,8 @@ async def test_llm_chat_injects_active_selfref_key_for_runtime_context_ops() -> 
 
     with (
         patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.execute_react_loop_streaming",
+            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.ReAct_loop",
             new=fake_execute_react_loop_streaming,
-        ),
-        patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.process_chat_response_stream",
-            new=passthrough_process_chat_response_stream,
         ),
         patch(
             "SimpleLLMFunc.llm_decorator.llm_chat_decorator.langfuse_client.start_as_current_observation",
@@ -645,7 +610,7 @@ async def test_llm_chat_injects_active_selfref_key_for_runtime_context_ops() -> 
             agent("hello", history=history),
         )
 
-        async for _content, _updated_history in stream:
+        async for _output in stream:
             pass
 
     main_history = self_reference.snapshot_history("agent_main")
@@ -706,7 +671,6 @@ async def test_llm_chat_runtime_context_forget_uses_mutation_only_path() -> None
             toolkit=cast(Any, repl.toolset),
             self_reference=self_reference,
             self_reference_key="agent_main",
-            enable_event=True,
         )
         async def agent(message: str, history=None):
             """test agent"""
@@ -782,7 +746,6 @@ async def test_llm_chat_runtime_context_compact_rewrites_final_messages() -> Non
             toolkit=cast(Any, repl.toolset),
             self_reference=self_reference,
             self_reference_key="agent_main",
-            enable_event=True,
         )
         async def agent(message: str, history=None):
             """test agent"""
@@ -803,10 +766,18 @@ async def test_llm_chat_runtime_context_compact_rewrites_final_messages() -> Non
     assert history == react_end.final_messages
     assert react_end.final_messages[0] == {"role": "system", "content": "test agent"}
     assert react_end.final_messages[1]["role"] == "assistant"
-    assert "<context_compaction_summary>" in react_end.final_messages[1]["content"]
-    assert "## Goal" in react_end.final_messages[1]["content"]
-    assert "Goal A" in react_end.final_messages[1]["content"]
+    assert "<context_compaction_summary>" in str(react_end.final_messages[1]["content"])
+    assert "Goal A" in str(react_end.final_messages[1]["content"])
     assert react_end.final_messages[2] == {"role": "assistant", "content": "done"}
+    assert react_end.final_response == "done"
+    stored_source = self_reference.snapshot_selfref_source("agent_main")
+    assert stored_source.summary is not None
+    assert stored_source.summary["goal"] == "Goal A"
+    assert stored_source.summary_message is not None
+    assert "<context_compaction_summary>" in str(stored_source.summary_message["content"])
+    assert stored_source.working_messages == [
+        {"role": "assistant", "content": "done"},
+    ]
     assert len(react_end.final_messages) == 3
 
 
@@ -866,7 +837,6 @@ async def test_llm_chat_runtime_context_compact_can_remember_experience() -> Non
             toolkit=cast(Any, repl.toolset),
             self_reference=self_reference,
             self_reference_key="agent_main",
-            enable_event=True,
         )
         async def agent(message: str, history=None):
             """test agent"""
@@ -890,6 +860,14 @@ async def test_llm_chat_runtime_context_compact_can_remember_experience() -> Non
     assert react_end.final_messages[1]["role"] == "assistant"
     assert "Goal B" in str(react_end.final_messages[1]["content"])
     assert react_end.final_messages[2] == {"role": "assistant", "content": "done"}
+    assert react_end.final_response == "done"
+    stored_source = self_reference.snapshot_selfref_source("agent_main")
+    assert stored_source.experiences == [{"id": "exp_1", "text": "Preference B"}]
+    assert stored_source.summary is not None
+    assert stored_source.summary["goal"] == "Goal B"
+    assert stored_source.working_messages == [
+        {"role": "assistant", "content": "done"},
+    ]
     assert len(react_end.final_messages) == 3
 
 
@@ -961,12 +939,15 @@ async def test_llm_chat_runtime_context_compact_applies_before_next_llm_call() -
             agent("hello", history=history),
         )
 
-        async for _content, _updated_history in stream:
+        async for _output in stream:
             pass
 
     assert len(captured_messages) == 2
     second_call_messages = captured_messages[1]
-    assert second_call_messages[0] == {"role": "system", "content": "test agent"}
+    assert second_call_messages[0]["role"] == "system"
+    assert "test agent" in str(second_call_messages[0]["content"])
+    assert "<tool_best_practices>" in str(second_call_messages[0]["content"])
+    assert "<must_principles>" in str(second_call_messages[0]["content"])
     assert second_call_messages[1]["role"] == "assistant"
     assert "<context_compaction_summary>" in str(second_call_messages[1]["content"])
     assert "Goal C" in str(second_call_messages[1]["content"])
@@ -999,7 +980,7 @@ async def test_llm_chat_selfref_clears_active_react_state_after_run() -> None:
 
     with (
         patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.execute_react_loop_streaming",
+            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.ReAct_loop",
             new=fake_execute_react_loop_streaming,
         ),
         patch(
@@ -1022,7 +1003,7 @@ async def test_llm_chat_selfref_clears_active_react_state_after_run() -> None:
             agent("hello", history=[]),
         )
 
-        async for _content, _updated_history in stream:
+        async for _output in stream:
             pass
 
     assert observed_state_during_run
@@ -1059,12 +1040,8 @@ async def test_llm_chat_fork_uses_isolated_pyrepl_session_toolkit() -> None:
 
     with (
         patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.execute_react_loop_streaming",
+            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.ReAct_loop",
             new=fake_execute_react_loop_streaming,
-        ),
-        patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.process_chat_response_stream",
-            new=passthrough_process_chat_response_stream,
         ),
         patch(
             "SimpleLLMFunc.llm_decorator.llm_chat_decorator.langfuse_client.start_as_current_observation",
@@ -1152,12 +1129,8 @@ async def test_llm_chat_fork_clones_custom_pyrepl_pack_primitives() -> None:
 
     with (
         patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.execute_react_loop_streaming",
+            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.ReAct_loop",
             new=fake_execute_react_loop_streaming,
-        ),
-        patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.process_chat_response_stream",
-            new=passthrough_process_chat_response_stream,
         ),
         patch(
             "SimpleLLMFunc.llm_decorator.llm_chat_decorator.langfuse_client.start_as_current_observation",
@@ -1308,7 +1281,7 @@ async def test_llm_chat_selfref_fork_spawn_preserves_langfuse_trace_context() ->
                 agent("root task", history=history),
             )
 
-            async for _content, _updated_history in stream:
+            async for _output in stream:
                 pass
         finally:
             reset_langfuse_trace_context(trace_token)
@@ -1408,7 +1381,7 @@ async def test_llm_chat_sets_explicit_langfuse_trace_name() -> None:
             core_agent("hello", history=[]),
         )
 
-        async for _content, _updated_history in stream:
+        async for _output in stream:
             pass
 
     parent_chat_span = next(
@@ -1466,7 +1439,7 @@ async def test_llm_chat_propagates_trace_name_to_child_observations() -> None:
             core_agent("hello", history=[]),
         )
 
-        async for _content, _updated_history in stream:
+        async for _output in stream:
             pass
 
     generation_span = next(
@@ -1507,7 +1480,7 @@ async def test_llm_chat_forwards_reasoning_kwargs_to_openai_responses_interface(
         core_agent("hello", history=[]),
     )
 
-    async for _content, _updated_history in stream:
+    async for _output in stream:
         pass
 
     request_kwargs = create_mock.await_args.kwargs
@@ -1544,7 +1517,7 @@ async def test_llm_chat_maps_docstring_system_prompt_to_responses_instructions()
         core_agent("hello", history=[]),
     )
 
-    async for _content, _updated_history in stream:
+    async for _output in stream:
         pass
 
     request_kwargs = create_mock.await_args.kwargs
@@ -1692,7 +1665,7 @@ async def test_llm_chat_event_mode_merges_self_reference_memory_mutations() -> N
 
     with (
         patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.execute_react_loop_streaming",
+            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.ReAct_loop",
             new=fake_execute_react_loop_streaming,
         ),
         patch(
@@ -1703,7 +1676,6 @@ async def test_llm_chat_event_mode_merges_self_reference_memory_mutations() -> N
 
         @llm_chat(
             llm_interface=mock_llm,
-            enable_event=True,
             self_reference=self_reference,
             self_reference_key="agent_main",
         )
@@ -1735,6 +1707,68 @@ async def test_llm_chat_event_mode_merges_self_reference_memory_mutations() -> N
     ]
     assert history == final_history
     assert self_reference.snapshot_history("agent_main") == final_history
+
+
+@pytest.mark.asyncio
+async def test_llm_chat_event_mode_preserves_protocol_tool_history_for_next_turn() -> None:
+    """Tool turns should persist assistant tool-call protocol messages for reuse."""
+
+    mock_llm = MagicMock()
+    mock_llm.model_name = "test-model"
+    mock_llm.chat = AsyncMock(
+        side_effect=[
+            _make_tool_call_completion_with_content(
+                "execute_code",
+                {"code": "print('ok')"},
+                content="Let me check that.",
+            ),
+            _make_chat_completion("first done"),
+            _make_chat_completion("second done"),
+        ]
+    )
+
+    repl = PyRepl()
+    self_reference = _builtin_self_reference(repl)
+    history: list[dict[str, Any]] = []
+
+    with patch(
+        "SimpleLLMFunc.llm_decorator.llm_chat_decorator.langfuse_client.start_as_current_observation",
+        return_value=_DummyObservation(),
+    ):
+
+        @llm_chat(
+            llm_interface=mock_llm,
+            toolkit=cast(Any, repl.toolset),
+            self_reference=self_reference,
+            self_reference_key="agent_main",
+        )
+        async def agent(message: str, history=None):
+            """test agent"""
+
+        first_outputs: list[ReactOutput] = []
+        async for output in cast(AsyncGenerator[ReactOutput, None], agent("hello", history=history)):
+            first_outputs.append(output)
+
+        persisted_after_first = self_reference.snapshot_history("agent_main")
+        assistant_tool_index = next(
+            index
+            for index, message in enumerate(persisted_after_first)
+            if message.get("role") == "assistant" and message.get("tool_calls")
+        )
+        assistant_tool_message = persisted_after_first[assistant_tool_index]
+        tool_result_message = persisted_after_first[assistant_tool_index + 1]
+        assert tool_result_message["role"] == "tool"
+        assert tool_result_message["tool_call_id"] == "call_execute_code"
+        assert "ok" in str(tool_result_message["content"])
+        assert assistant_tool_message["content"] == "Let me check that."
+
+        second_outputs: list[ReactOutput] = []
+        async for output in cast(AsyncGenerator[ReactOutput, None], agent("again", history=history)):
+            second_outputs.append(output)
+
+    second_end = cast(EventYield, second_outputs[-1])
+    assert isinstance(second_end.event, ReactEndEvent)
+    assert second_end.event.final_response == "second done"
 
 
 @pytest.mark.asyncio
@@ -1810,7 +1844,7 @@ async def test_llm_chat_event_mode_ignores_fork_react_end_for_history_merge() ->
 
     with (
         patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.execute_react_loop_streaming",
+            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.ReAct_loop",
             new=fake_execute_react_loop_streaming,
         ),
         patch(
@@ -1821,7 +1855,6 @@ async def test_llm_chat_event_mode_ignores_fork_react_end_for_history_merge() ->
 
         @llm_chat(
             llm_interface=mock_llm,
-            enable_event=True,
             self_reference=self_reference,
             self_reference_key="agent_main",
         )
@@ -1904,12 +1937,8 @@ async def test_llm_chat_non_event_mode_merges_self_reference_memory_mutations() 
 
     with (
         patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.execute_react_loop_streaming",
+            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.ReAct_loop",
             new=fake_execute_react_loop_streaming,
-        ),
-        patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.process_chat_response_stream",
-            new=passthrough_process_chat_response_stream,
         ),
         patch(
             "SimpleLLMFunc.llm_decorator.llm_chat_decorator.langfuse_client.start_as_current_observation",
@@ -1930,23 +1959,25 @@ async def test_llm_chat_non_event_mode_merges_self_reference_memory_mutations() 
             agent("hello", history=history),
         )
 
-        outputs: list[tuple[str, list[dict[str, Any]]]] = []
+        outputs: list[ReactOutput] = []
         async for output in stream:
-            outputs.append(output)
+            outputs.append(cast(ReactOutput, output))
 
     assert len(outputs) == 1
-    output_content, output_history = outputs[0]
+    output = outputs[0]
+    assert is_response_yield(output)
+    output_content = output.response
+    output_history = output.messages
     assert output_content == "done"
-    assert output_history[0].get("role") == "system"
-    assert output_history[0].get("content") == "test agent"
-    assert output_history[1:] == [
+    assert output_history == history
+    assert history == [
+        {"role": "system", "content": "test agent"},
         {"role": "user", "content": "seed"},
         {"role": "user", "content": "[plan] keep me"},
         {"role": "user", "content": "message: hello"},
         {"role": "assistant", "content": "done"},
     ]
-    assert history == output_history
-    assert self_reference.snapshot_history("agent_main") == output_history
+    assert self_reference.snapshot_history("agent_main") == history
 
 
 @pytest.mark.asyncio
@@ -1956,13 +1987,16 @@ async def test_llm_chat_uses_function_name_as_default_self_reference_key() -> No
     history: list[dict[str, Any]] = [{"role": "user", "content": "seed"}]
     self_reference = SelfReference()
     captured_system_prompt: str | None = None
+    captured_compile_source: Any = None
 
     async def fake_execute_react_loop_streaming(
         *args: Any, **kwargs: Any
     ) -> AsyncGenerator[tuple[str, list[dict[str, Any]]], None]:
         nonlocal captured_system_prompt
+        nonlocal captured_compile_source
         _ = args
 
+        captured_compile_source = kwargs.get("compile_source")
         messages = kwargs["messages"]
         if messages:
             maybe_prompt = messages[0].get("content")
@@ -1987,12 +2021,8 @@ async def test_llm_chat_uses_function_name_as_default_self_reference_key() -> No
 
     with (
         patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.execute_react_loop_streaming",
+            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.ReAct_loop",
             new=fake_execute_react_loop_streaming,
-        ),
-        patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.process_chat_response_stream",
-            new=passthrough_process_chat_response_stream,
         ),
         patch(
             "SimpleLLMFunc.llm_decorator.llm_chat_decorator.langfuse_client.start_as_current_observation",
@@ -2009,17 +2039,16 @@ async def test_llm_chat_uses_function_name_as_default_self_reference_key() -> No
             agent("hello", history=history),
         )
 
-        async for _content, _history in stream:
+        async for _output in stream:
             pass
 
     assert self_reference.list_history_keys() == ["agent"]
     assert self_reference.snapshot_history("agent") == history
+    assert captured_compile_source is not None
+    assert captured_compile_source.data_from_agent_config.base_system_prompt == "test agent"
+    assert captured_compile_source.data_from_agent_config.include_must_principles is True
     assert captured_system_prompt is not None
-    assert "test agent" in captured_system_prompt
-    assert _MUST_PROMPT_BLOCK in captured_system_prompt
-    assert _MUST_PROMPT_RULE in captured_system_prompt
-    assert captured_system_prompt.strip().endswith("</must_principles>")
-    assert "[Runtime Primitive Contract]" not in captured_system_prompt
+    assert captured_system_prompt == "test agent"
 
 
 @pytest.mark.asyncio
@@ -2029,6 +2058,7 @@ async def test_llm_chat_persists_runtime_system_prompt_across_turns() -> None:
     history: list[dict[str, Any]] = [{"role": "user", "content": "seed"}]
     self_reference = SelfReference()
     observed_system_prompts: list[str] = []
+    captured_compile_sources: list[Any] = []
     call_count = 0
 
     async def fake_execute_react_loop_streaming(
@@ -2036,6 +2066,8 @@ async def test_llm_chat_persists_runtime_system_prompt_across_turns() -> None:
     ) -> AsyncGenerator[tuple[str, list[dict[str, Any]]], None]:
         nonlocal call_count
         _ = args
+
+        captured_compile_sources.append(kwargs.get("compile_source"))
 
         messages = kwargs["messages"]
         if messages:
@@ -2073,12 +2105,8 @@ async def test_llm_chat_persists_runtime_system_prompt_across_turns() -> None:
 
     with (
         patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.execute_react_loop_streaming",
+            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.ReAct_loop",
             new=fake_execute_react_loop_streaming,
-        ),
-        patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.process_chat_response_stream",
-            new=passthrough_process_chat_response_stream,
         ),
         patch(
             "SimpleLLMFunc.llm_decorator.llm_chat_decorator.langfuse_client.start_as_current_observation",
@@ -2098,24 +2126,25 @@ async def test_llm_chat_persists_runtime_system_prompt_across_turns() -> None:
             AsyncGenerator[tuple[str, list[dict[str, Any]]], None],
             agent("hello 1", history=history),
         )
-        async for _content, _history in first_stream:
+        async for _output in first_stream:
             pass
 
         second_stream = cast(
             AsyncGenerator[tuple[str, list[dict[str, Any]]], None],
             agent("hello 2", history=history),
         )
-        async for _content, _history in second_stream:
+        async for _output in second_stream:
             pass
 
     assert call_count == 2
     assert len(observed_system_prompts) == 2
+    assert len(captured_compile_sources) == 2
     assert "docstring system" in observed_system_prompts[0]
-    assert "runtime system" in observed_system_prompts[1]
-    assert _MUST_PROMPT_BLOCK in observed_system_prompts[0]
-    assert _MUST_PROMPT_BLOCK in observed_system_prompts[1]
-    assert "[Runtime Primitive Contract]" not in observed_system_prompts[0]
-    assert "[Runtime Primitive Contract]" not in observed_system_prompts[1]
+    assert observed_system_prompts[1] == "runtime system"
+    assert captured_compile_sources[0].data_from_agent_config.base_system_prompt == "docstring system"
+    assert captured_compile_sources[1].data_from_agent_config.base_system_prompt == "docstring system"
+    assert captured_compile_sources[1].data_from_selfref is not None
+    assert captured_compile_sources[1].data_from_selfref.base_system_prompt == "runtime system"
     assert history[0] == {"role": "system", "content": "runtime system"}
     assert self_reference.snapshot_history("agent_main")[0] == {
         "role": "system",
@@ -2130,6 +2159,7 @@ async def test_append_system_prompt_persists_without_contract_pollution() -> Non
     history: list[dict[str, Any]] = []
     self_reference = SelfReference()
     observed_system_prompts: list[str] = []
+    captured_compile_sources: list[Any] = []
     call_count = 0
 
     async def fake_execute_react_loop_streaming(
@@ -2137,6 +2167,8 @@ async def test_append_system_prompt_persists_without_contract_pollution() -> Non
     ) -> AsyncGenerator[tuple[str, list[dict[str, Any]]], None]:
         nonlocal call_count
         _ = args
+
+        captured_compile_sources.append(kwargs.get("compile_source"))
 
         messages = kwargs["messages"]
         if messages:
@@ -2172,12 +2204,8 @@ async def test_append_system_prompt_persists_without_contract_pollution() -> Non
 
     with (
         patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.execute_react_loop_streaming",
+            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.ReAct_loop",
             new=fake_execute_react_loop_streaming,
-        ),
-        patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.process_chat_response_stream",
-            new=passthrough_process_chat_response_stream,
         ),
         patch(
             "SimpleLLMFunc.llm_decorator.llm_chat_decorator.langfuse_client.start_as_current_observation",
@@ -2197,22 +2225,24 @@ async def test_append_system_prompt_persists_without_contract_pollution() -> Non
             AsyncGenerator[tuple[str, list[dict[str, Any]]], None],
             agent("hello 1", history=history),
         )
-        async for _content, _history in first_stream:
+        async for _output in first_stream:
             pass
 
         second_stream = cast(
             AsyncGenerator[tuple[str, list[dict[str, Any]]], None],
             agent("hello 2", history=history),
         )
-        async for _content, _history in second_stream:
+        async for _output in second_stream:
             pass
 
     assert call_count == 2
     assert len(observed_system_prompts) == 2
-    assert "Preference A" in observed_system_prompts[1]
-    assert _MUST_PROMPT_BLOCK in observed_system_prompts[0]
-    assert _MUST_PROMPT_BLOCK in observed_system_prompts[1]
-    assert "[Runtime Primitive Contract]" not in observed_system_prompts[1]
+    assert len(captured_compile_sources) == 2
+    assert observed_system_prompts[1] == "docstring system\nPreference A"
+    assert captured_compile_sources[1].data_from_selfref is not None
+    assert captured_compile_sources[1].data_from_selfref.base_system_prompt == (
+        "docstring system\nPreference A"
+    )
 
     persisted_system_prompt = self_reference.memory["agent_main"].get_system_prompt()
     assert persisted_system_prompt == "docstring system\nPreference A"
@@ -2226,11 +2256,13 @@ async def test_llm_chat_deduplicates_runtime_primitive_contract_prompt() -> None
     repl = PyRepl()
     self_reference = _builtin_self_reference(repl)
     observed_system_prompts: list[str] = []
+    captured_compile_sources: list[Any] = []
 
     async def fake_execute_react_loop_streaming(
         *args: Any, **kwargs: Any
     ) -> AsyncGenerator[tuple[str, list[dict[str, Any]]], None]:
         _ = args
+        captured_compile_sources.append(kwargs.get("compile_source"))
         messages = kwargs["messages"]
         if messages:
             maybe_prompt = messages[0].get("content")
@@ -2254,12 +2286,8 @@ async def test_llm_chat_deduplicates_runtime_primitive_contract_prompt() -> None
 
     with (
         patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.execute_react_loop_streaming",
+            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.ReAct_loop",
             new=fake_execute_react_loop_streaming,
-        ),
-        patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.process_chat_response_stream",
-            new=passthrough_process_chat_response_stream,
         ),
         patch(
             "SimpleLLMFunc.llm_decorator.llm_chat_decorator.langfuse_client.start_as_current_observation",
@@ -2280,25 +2308,27 @@ async def test_llm_chat_deduplicates_runtime_primitive_contract_prompt() -> None
             AsyncGenerator[tuple[str, list[dict[str, Any]]], None],
             agent("hello 1", history=history),
         )
-        async for _content, _history in first_stream:
+        async for _output in first_stream:
             pass
 
         second_stream = cast(
             AsyncGenerator[tuple[str, list[dict[str, Any]]], None],
             agent("hello 2", history=history),
         )
-        async for _content, _history in second_stream:
+        async for _output in second_stream:
             pass
 
     assert len(observed_system_prompts) == 2
-    assert observed_system_prompts[0].count("[Runtime Primitive Contract]") == 0
-    assert observed_system_prompts[1].count("[Runtime Primitive Contract]") == 0
-    assert observed_system_prompts[0].count("<tool_best_practices>") == 1
-    assert observed_system_prompts[1].count("<tool_best_practices>") == 1
-    assert observed_system_prompts[0].count("<runtime_primitive_contract>") == 1
-    assert observed_system_prompts[1].count("<runtime_primitive_contract>") == 1
-    assert observed_system_prompts[0].count(_MUST_PROMPT_BLOCK) == 1
-    assert observed_system_prompts[1].count(_MUST_PROMPT_BLOCK) == 1
+    assert len(captured_compile_sources) == 2
+    assert observed_system_prompts == ["docstring system", "docstring system"]
+    for compile_source in captured_compile_sources:
+        assert compile_source is not None
+        assert compile_source.data_from_agent_config.base_system_prompt == "docstring system"
+        assert compile_source.data_from_agent_config.include_must_principles is True
+        tool_specs = compile_source.data_from_agent_config.tool_prompt_specs
+        assert len(tool_specs) >= 1
+        rendered_specs = str(tool_specs)
+        assert rendered_specs.count("<runtime_primitive_contract>") <= 1
 
 
 @pytest.mark.asyncio
@@ -2338,12 +2368,8 @@ async def test_llm_chat_seeds_system_prompt_into_empty_self_reference_memory() -
 
     with (
         patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.execute_react_loop_streaming",
+            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.ReAct_loop",
             new=fake_execute_react_loop_streaming,
-        ),
-        patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.process_chat_response_stream",
-            new=passthrough_process_chat_response_stream,
         ),
         patch(
             "SimpleLLMFunc.llm_decorator.llm_chat_decorator.langfuse_client.start_as_current_observation",
@@ -2364,7 +2390,7 @@ async def test_llm_chat_seeds_system_prompt_into_empty_self_reference_memory() -
             agent("hello", history=history),
         )
 
-        async for _content, _history in stream:
+        async for _output in stream:
             pass
 
 
@@ -2404,12 +2430,8 @@ async def test_llm_chat_renders_docstring_template_params_into_system_prompt() -
 
     with (
         patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.execute_react_loop_streaming",
+            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.ReAct_loop",
             new=fake_execute_react_loop_streaming,
-        ),
-        patch(
-            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.process_chat_response_stream",
-            new=passthrough_process_chat_response_stream,
         ),
         patch(
             "SimpleLLMFunc.llm_decorator.llm_chat_decorator.langfuse_client.start_as_current_observation",
@@ -2430,7 +2452,7 @@ async def test_llm_chat_renders_docstring_template_params_into_system_prompt() -
             ),
         )
 
-        async for _content, _history in stream:
+        async for _output in stream:
             pass
 
     assert captured_system_prompt is not None

@@ -4,6 +4,9 @@ import copy
 import re
 from typing import Any, Dict, List, Optional, cast
 
+from SimpleLLMFunc.base.context_source import DataFromSelfRef
+from SimpleLLMFunc.type.message import NormalizedMessageList
+
 MemoryHistory = List[Dict[str, Any]]
 
 _EXPERIENCE_BLOCK_START = "<experience>"
@@ -327,6 +330,17 @@ def parse_context_messages(messages: MemoryHistory) -> Dict[str, Any]:
     }
 
 
+def parse_data_from_selfref(messages: MemoryHistory) -> DataFromSelfRef:
+    parsed = parse_context_messages(messages)
+    return DataFromSelfRef(
+        base_system_prompt=cast(str, parsed["base_system_prompt"]),
+        experiences=cast(List[Dict[str, str]], parsed["experiences"]),
+        summary=cast(Optional[Dict[str, Any]], parsed["summary"]),
+        summary_message=cast(Optional[Dict[str, Any]], parsed["summary_message"]),
+        working_messages=cast(NormalizedMessageList, parsed["working_messages"]),
+    )
+
+
 def build_context_messages_from_state_data(
     context_state: Dict[str, Any],
 ) -> MemoryHistory:
@@ -357,17 +371,31 @@ def build_context_messages_from_state_data(
     return compiled
 
 
+def build_context_messages_from_selfref_data(data: DataFromSelfRef) -> MemoryHistory:
+    return build_context_messages_from_state_data(
+        {
+            "base_system_prompt": data.base_system_prompt,
+            "experiences": copy.deepcopy(data.experiences),
+            "summary": copy.deepcopy(data.summary),
+            "summary_message": copy.deepcopy(data.summary_message),
+            "working_messages": clone_messages(cast(MemoryHistory, data.working_messages)),
+        }
+    )
+
+
 def canonicalize_context_messages(messages: MemoryHistory) -> MemoryHistory:
-    return build_context_messages_from_state_data(parse_context_messages(messages))
+    return build_context_messages_from_selfref_data(parse_data_from_selfref(messages))
 
 
 __all__ = [
     "MemoryHistory",
+    "build_context_messages_from_selfref_data",
     "build_context_messages_from_state_data",
     "canonicalize_context_messages",
     "clone_messages",
     "extract_latest_system_prompt",
     "normalize_experience_text",
+    "parse_data_from_selfref",
     "parse_context_compaction_summary",
     "parse_context_messages",
     "remove_framework_injected_prompt_blocks",

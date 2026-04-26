@@ -314,7 +314,7 @@ from SimpleLLMFunc import llm_chat, tui
 
 
 @tui(custom_event_hook=[...])
-@llm_chat(llm_interface=my_llm_interface, stream=True, enable_event=True)
+@llm_chat(llm_interface=my_llm_interface, stream=True)
 async def agent(message: str, history=None):
     """Your agent prompt"""
 
@@ -325,7 +325,7 @@ if __name__ == "__main__":
 
 See `examples/tui_chat_example.py` for a full example.
 
-When `enable_event=True`, each `EventYield` includes `origin` metadata. This is especially useful for forked agent trees:
+Each `EventYield` includes `origin` metadata. This is especially useful for forked agent trees:
 
 ```python
 from SimpleLLMFunc.hooks import is_event_yield
@@ -762,7 +762,10 @@ SimpleLLMFunc/
 │   ├── llm_decorator/         # LLM decorator module
 │   │   ├── llm_function_decorator.py    # @llm_function implementation
 │   │   ├── llm_chat_decorator.py        # @llm_chat implementation
-│   │   ├── steps/                       # Step-based execution pipeline
+│   │   ├── invocation_spec.py           # Unified invocation contracts
+│   │   ├── invocation_builder.py        # InvocationSpec builders
+│   │   ├── prompt_contract.py           # Prompt/seed helpers
+│   │   ├── signature.py                 # Signature binding + log context
 │   │   └── utils/                       # Decorator utilities
 │   ├── tool/                  # Tool system
 │   │   └── tool.py            # @tool decorator and Tool base class

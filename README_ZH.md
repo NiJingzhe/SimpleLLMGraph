@@ -318,7 +318,7 @@ from SimpleLLMFunc import llm_chat, tui
 
 
 @tui(custom_event_hook=[...])
-@llm_chat(llm_interface=my_llm_interface, stream=True, enable_event=True)
+@llm_chat(llm_interface=my_llm_interface, stream=True)
 async def agent(message: str, history=None):
     """Your agent prompt"""
 
@@ -329,7 +329,7 @@ if __name__ == "__main__":
 
 完整示例见：`examples/tui_chat_example.py`
 
-当 `enable_event=True` 时，每个 `EventYield` 都会携带 `origin` 元数据，这在 fork 场景下尤其有用：
+每个 `EventYield` 都会携带 `origin` 元数据，这在 fork 场景下尤其有用：
 
 ```python
 from SimpleLLMFunc.hooks import is_event_yield
@@ -766,7 +766,10 @@ SimpleLLMFunc/
 │   ├── llm_decorator/         # LLM 装饰器模块
 │   │   ├── llm_function_decorator.py    # @llm_function 实现
 │   │   ├── llm_chat_decorator.py        # @llm_chat 实现
-│   │   ├── steps/                       # 步骤化执行流水线
+│   │   ├── invocation_spec.py           # 统一 invocation 契约
+│   │   ├── invocation_builder.py        # InvocationSpec 构建
+│   │   ├── prompt_contract.py           # prompt / transcript seed 辅助逻辑
+│   │   ├── signature.py                 # 签名绑定与日志上下文
 │   │   └── utils/                       # 装饰器工具
 │   ├── tool/                  # 工具系统
 │   │   └── tool.py            # @tool 装饰器和 Tool 基类

@@ -9,6 +9,7 @@ from SimpleLLMFunc.type.message import NormalizedMessageParam
 
 def build_assistant_tool_message(
     tool_calls: List[Dict[str, Any]],
+    content: Optional[str] = None,
     reasoning_details: Optional[List[Dict[str, Any]]] = None,
 ) -> NormalizedMessageParam:
     """Construct the assistant message containing tool call descriptors.
@@ -25,7 +26,7 @@ def build_assistant_tool_message(
     if tool_calls:
         return {
             "role": "assistant",
-            "content": None,
+            "content": content,
             "tool_calls": tool_calls,
         }
     return {}

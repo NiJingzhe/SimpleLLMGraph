@@ -27,7 +27,6 @@ class ReActHookExecutionContext:
     messages: MessageList
     llm_kwargs: dict[str, Any]
     stream: bool
-    protocol_messages: Optional[MessageList] = None
     iteration: int = 0
     total_llm_calls: int = 0
     total_tool_calls: int = 0

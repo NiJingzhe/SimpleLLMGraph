@@ -296,6 +296,7 @@ async def execute_single_llm_phase(
     elif tool_calls:
         mutations = [
             AssistantMessageMutation(
+                content=content or None,
                 tool_calls=tool_calls,
                 reasoning_details=reasoning_details,
             )

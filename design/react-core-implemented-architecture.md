@@ -59,7 +59,7 @@ Its responsibilities are:
 2. define `CompiledContext`
 3. apply mutations to message history
 4. produce model-facing messages
-5. produce semantic messages for finalize and hooks
+5. preserve one protocol-valid compiled history for hooks and finalize
 
 Important exported pieces:
 
@@ -67,7 +67,17 @@ Important exported pieces:
 2. `CompiledContext`
 3. `compile_context(...)`
 4. `apply_mutations(...)`
-5. `compile_semantic_messages(...)`
+
+Current compile-source clarification:
+
+1. compile still owns construction of the full final message list sent into the next LLM call
+2. compile does not require system and non-system messages to come from the same source
+3. in the current chat path:
+   - system content is assembled from source-level data such as `data_from_agent_config` and `data_from_selfref`
+   - non-system messages come from the already-built `input_messages` / turn history
+4. prompt injection such as tool best practices and must-principles is applied after that full list is assembled
+
+This means selfref is no longer treated as the default source for reconstructing the whole non-system transcript on each turn.
 
 ### `base/llm_call.py`
 
@@ -185,6 +195,21 @@ It allows integrations such as selfref to contribute structured mutations before
 
 ## Selfref Integration Model
 
+The current selfref boundary is source-oriented.
+
+That means:
+
+1. selfref stores durable source-level context such as base system prompt, experiences, summary, and parsed working state
+2. selfref contributes mutations at compile boundaries
+3. final compiled histories can be parsed back into selfref source form after mutation application and finalize
+4. selfref is not the default source for rebuilding every non-system message when `llm_chat` already has an explicit `history + current input` message list
+
+In practice, the implemented chat compile path treats:
+
+1. `data_from_agent_config` as the agent-config side of system construction
+2. `data_from_selfref` as the durable selfref side of system construction
+3. `input_messages` as the default source for non-system messages
+
 ### What Is Mutation-Only Now
 
 The ReAct turn path for selfref context compaction is now mutation-driven.
@@ -270,7 +295,7 @@ The current effective loop shape is:
 5. if tool calls exist, run one tool batch
 6. turn tool outputs into mutations
 7. repeat
-8. finalize with compiled semantic messages
+8. finalize with the compiled protocol history
 
 Conceptually:
 
@@ -280,7 +305,10 @@ while True:
     compiled = compile_context(context_state, pending_mutations)
     pending_mutations = []
 
-    llm_result = single_llm_call(compiled.llm_messages)
+    # compile_source can assemble the full LLM input here,
+    # using source-level system data plus non-system input messages
+
+    llm_result = single_llm_call(compiled.messages)
     llm_mutations = llm_result.mutations
 
     if no_tool_calls:
@@ -289,7 +317,7 @@ while True:
 
     tool_result = schedule_tool_batch(llm_result.tool_calls)
     pending_mutations = llm_mutations + tool_result.mutations
-    context_state = ContextState(messages=compile_context(context_state, pending_mutations).llm_messages)
+    context_state = ContextState(messages=compile_context(context_state, pending_mutations).messages)
     pending_mutations = []
 ```
 

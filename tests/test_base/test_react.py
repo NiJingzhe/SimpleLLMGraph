@@ -279,7 +279,6 @@ class TestExecuteLLM:
             tool_map={},
             max_tool_calls=5,
             stream=False,
-            enable_event=True,
         ):
             if isinstance(output, EventYield):
                 origins.append(output.origin)
@@ -353,7 +352,6 @@ class TestExecuteLLM:
             tool_map={},
             max_tool_calls=5,
             stream=False,
-            enable_event=True,
             hooks=_Hooks(),
         ):
             if isinstance(output, EventYield) and isinstance(output.event, ReactEndEvent):

@@ -46,7 +46,6 @@ async def schedule_tool_batch(
     func_name: str,
     iteration: int,
     event_bus: Optional[EventBus] = None,
-    enable_event: bool = False,
     abort_signal: Optional[AbortSignal] = None,
 ) -> AsyncGenerator[EventYield | ToolSchedulerResult, None]:
     if not tool_calls:
@@ -62,19 +61,18 @@ async def schedule_tool_batch(
     trace_context = get_langfuse_trace_context()
     tool_results: List[ToolCallResult] = []
 
-    if enable_event:
-        typed_tool_calls: List[ToolCall] = [dict_to_tool_call(tc) for tc in tool_calls]
-        yield await _emit_event(
-            ToolCallsBatchStartEvent(
-                event_type=ReActEventType.TOOL_CALLS_BATCH_START,
-                timestamp=_time_now(),
-                trace_id=trace_id,
-                func_name=func_name,
-                iteration=iteration,
-                tool_calls=typed_tool_calls,
-                batch_size=len(tool_calls),
-            )
+    typed_tool_calls: List[ToolCall] = [dict_to_tool_call(tc) for tc in tool_calls]
+    yield await _emit_event(
+        ToolCallsBatchStartEvent(
+            event_type=ReActEventType.TOOL_CALLS_BATCH_START,
+            timestamp=_time_now(),
+            trace_id=trace_id,
+            func_name=func_name,
+            iteration=iteration,
+            tool_calls=typed_tool_calls,
+            batch_size=len(tool_calls),
         )
+    )
 
     async def _run_one_tool(
         tool_call: Dict[str, Any],
@@ -85,25 +83,6 @@ async def schedule_tool_batch(
         arguments_str = function_call.get("arguments", "{}")
         start_time = time.time()
         queued_events: List[EventYield] = []
-
-        if enable_event:
-            parsed_arguments = parse_tool_call_arguments(arguments_str, allow_closure=True)
-            queued_events.append(
-                await _emit_event(
-                ToolCallStartEvent(
-                    event_type=ReActEventType.TOOL_CALL_START,
-                    timestamp=_time_now(),
-                    trace_id=trace_id,
-                    func_name=func_name,
-                    iteration=iteration,
-                    tool_name=tool_name,
-                    tool_call_id=tool_call_id,
-                    arguments=parsed_arguments if parsed_arguments is not None else {},
-                    tool_call=dict_to_tool_call(tool_call),
-                ),
-                origin_overrides={"tool_name": tool_name, "tool_call_id": tool_call_id},
-            )
-            )
 
         tool_event_emitter = ToolEventEmitter(
             _trace_id=trace_id,
@@ -157,53 +136,53 @@ async def schedule_tool_batch(
                     "success": True,
                 }
             )
-            if enable_event:
-                queued_events.append(
-                    await _emit_event(
-                    ToolCallEndEvent(
-                        event_type=ReActEventType.TOOL_CALL_END,
-                        timestamp=_time_now(),
-                        trace_id=trace_id,
-                        func_name=func_name,
-                        iteration=iteration,
-                        tool_name=tool_name,
-                        tool_call_id=tool_call_id,
-                        arguments=parsed_arguments_end if parsed_arguments_end is not None else {},
-                        result=result_payload,
-                        execution_time=exec_time,
-                        success=True,
-                    ),
-                    origin_overrides={"tool_name": tool_name, "tool_call_id": tool_call_id},
-                )
-                )
-            if enable_event and tool_event_emitter.has_events():
+            if tool_event_emitter.has_events():
                 queued_events.extend(await tool_event_emitter.get_events())
+            queued_events.append(
+                await _emit_event(
+                ToolCallEndEvent(
+                    event_type=ReActEventType.TOOL_CALL_END,
+                    timestamp=_time_now(),
+                    trace_id=trace_id,
+                    func_name=func_name,
+                    iteration=iteration,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                    arguments=parsed_arguments_end if parsed_arguments_end is not None else {},
+                    result=result_payload,
+                    execution_time=exec_time,
+                    success=True,
+                ),
+                origin_overrides={"tool_name": tool_name, "tool_call_id": tool_call_id},
+            )
+            )
             return queued_events, mutations
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             exec_time = time.time() - start_time
             parsed_arguments_end = parse_tool_call_arguments(arguments_str, allow_closure=True)
-            if enable_event:
-                queued_events.append(
-                    await _emit_event(
-                    ToolCallErrorEvent(
-                        event_type=ReActEventType.TOOL_CALL_ERROR,
-                        timestamp=_time_now(),
-                        trace_id=trace_id,
-                        func_name=func_name,
-                        iteration=iteration,
-                        tool_name=tool_name,
-                        tool_call_id=tool_call_id,
-                        arguments=parsed_arguments_end if parsed_arguments_end is not None else {},
-                        error=exc,
-                        error_message=str(exc),
-                        error_type=type(exc).__name__,
-                        execution_time=exec_time,
-                    ),
-                    origin_overrides={"tool_name": tool_name, "tool_call_id": tool_call_id},
-                )
-                )
+            if tool_event_emitter.has_events():
+                queued_events.extend(await tool_event_emitter.get_events())
+            queued_events.append(
+                await _emit_event(
+                ToolCallErrorEvent(
+                    event_type=ReActEventType.TOOL_CALL_ERROR,
+                    timestamp=_time_now(),
+                    trace_id=trace_id,
+                    func_name=func_name,
+                    iteration=iteration,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                    arguments=parsed_arguments_end if parsed_arguments_end is not None else {},
+                    error=exc,
+                    error_message=str(exc),
+                    error_type=type(exc).__name__,
+                    execution_time=exec_time,
+                ),
+                origin_overrides={"tool_name": tool_name, "tool_call_id": tool_call_id},
+            )
+            )
             tool_results.append(
                 {
                     "tool_name": tool_name,
@@ -221,29 +200,69 @@ async def schedule_tool_batch(
                 )
             ]
 
-    tasks = [asyncio.create_task(_run_one_tool(tc)) for tc in tool_calls]
+    for tool_call in tool_calls:
+        tool_call_id = str(tool_call.get("id", ""))
+        function_call = tool_call.get("function", {})
+        tool_name = str(function_call.get("name", ""))
+        arguments_str = str(function_call.get("arguments", "{}"))
+        parsed_arguments = parse_tool_call_arguments(arguments_str, allow_closure=True)
+        yield await _emit_event(
+            ToolCallStartEvent(
+                event_type=ReActEventType.TOOL_CALL_START,
+                timestamp=_time_now(),
+                trace_id=trace_id,
+                func_name=func_name,
+                iteration=iteration,
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                arguments=parsed_arguments if parsed_arguments is not None else {},
+                tool_call=dict_to_tool_call(tool_call),
+            ),
+            origin_overrides={"tool_name": tool_name, "tool_call_id": tool_call_id},
+        )
 
-    if abort_signal is not None:
-        abort_task = asyncio.create_task(abort_signal.wait())
-        gather_future = asyncio.gather(*tasks, return_exceptions=True)
-        done, _ = await asyncio.wait({abort_task, gather_future}, return_when=asyncio.FIRST_COMPLETED)
-        if abort_task in done:
-            gather_future.cancel()
-            cancelled_mutations = []
-            for task, tool_call in zip(tasks, tool_calls):
-                if not task.done():
-                    task.cancel()
-                    function_call = tool_call.get("function", {})
-                    cancelled_mutations.append(
-                        ToolCancelledMutation(
-                            tool_call_id=str(tool_call.get("id", "")),
-                            tool_name=str(function_call.get("name", "")),
-                            abort_reason=abort_signal.reason,
+    tasks = [asyncio.create_task(_run_one_tool(tc)) for tc in tool_calls]
+    pending_tasks = set(tasks)
+    abort_task = asyncio.create_task(abort_signal.wait()) if abort_signal is not None else None
+    queued_event_task = (
+        asyncio.create_task(event_bus.get())
+        if event_bus is not None and pending_tasks
+        else None
+    )
+
+    mutations: List[ContextMutation] = []
+
+    try:
+        while pending_tasks:
+            wait_set: set[asyncio.Task[Any]] = set(pending_tasks)
+            if abort_task is not None:
+                wait_set.add(abort_task)
+            if queued_event_task is not None:
+                wait_set.add(queued_event_task)
+
+            done, _ = await asyncio.wait(wait_set, return_when=asyncio.FIRST_COMPLETED)
+
+            if abort_task is not None and abort_task in done:
+                cancelled_mutations = []
+                abort_reason = abort_signal.reason if abort_signal is not None else ""
+                for task, tool_call in zip(tasks, tool_calls):
+                    if not task.done():
+                        task.cancel()
+                        function_call = tool_call.get("function", {})
+                        cancelled_mutations.append(
+                            ToolCancelledMutation(
+                                tool_call_id=str(tool_call.get("id", "")),
+                                tool_name=str(function_call.get("name", "")),
+                                abort_reason=abort_reason,
+                            )
                         )
-                    )
-            await asyncio.gather(*tasks, return_exceptions=True)
-            await asyncio.gather(gather_future, return_exceptions=True)
-            if enable_event:
+                await asyncio.gather(*tasks, return_exceptions=True)
+                if queued_event_task is not None:
+                    queued_event_task.cancel()
+                    await asyncio.gather(queued_event_task, return_exceptions=True)
+                if event_bus is not None:
+                    while not event_bus.empty():
+                        yield event_bus.get_nowait()
                 yield await _emit_batch_end_event(
                     _emit_event,
                     trace_id=trace_id,
@@ -252,40 +271,60 @@ async def schedule_tool_batch(
                     tool_calls=tool_calls,
                     tool_results=tool_results,
                 )
-            yield ToolSchedulerResult(
-                mutations=cancelled_mutations,
-                total_tool_calls=len(tool_calls),
-                aborted=True,
-            )
-            return
-        abort_task.cancel()
-        gathered = await gather_future
-        task_outputs = [
-            item
-            for item in gathered
-            if not isinstance(item, BaseException)
-        ]
-    else:
-        task_outputs = await asyncio.gather(*tasks)
+                yield ToolSchedulerResult(
+                    mutations=cancelled_mutations,
+                    total_tool_calls=len(tool_calls),
+                    aborted=True,
+                )
+                return
 
-    mutations: List[ContextMutation] = []
-    queued_events: List[EventYield] = []
-    for event_outputs, task_mutations in task_outputs:
-        queued_events.extend(event_outputs)
-        mutations.extend(task_mutations)
+            queue_event_ready = queued_event_task is not None and queued_event_task in done
+            queue_event_output: Optional[EventYield] = None
+            if queue_event_ready and queued_event_task is not None:
+                queue_event_output = queued_event_task.result()
 
-    for event in queued_events:
-        yield event
+            if queue_event_output is not None:
+                yield queue_event_output
 
-    if enable_event:
-        yield await _emit_batch_end_event(
-            _emit_event,
-            trace_id=trace_id,
-            func_name=func_name,
-            iteration=iteration,
-            tool_calls=tool_calls,
-            tool_results=tool_results,
-        )
+            completed_tasks = [
+                task for task in done if task in pending_tasks
+            ]
+            for completed_task in completed_tasks:
+                pending_tasks.remove(completed_task)
+                event_outputs, task_mutations = completed_task.result()
+                for event in event_outputs:
+                    yield event
+                mutations.extend(task_mutations)
+
+            if queue_event_ready:
+                queued_event_task = (
+                    asyncio.create_task(event_bus.get())
+                    if event_bus is not None and pending_tasks
+                    else None
+                )
+
+        if queued_event_task is not None:
+            if queued_event_task.done() and not queued_event_task.cancelled():
+                yield queued_event_task.result()
+            else:
+                queued_event_task.cancel()
+                await asyncio.gather(queued_event_task, return_exceptions=True)
+        if event_bus is not None:
+            while not event_bus.empty():
+                yield event_bus.get_nowait()
+    finally:
+        if abort_task is not None:
+            abort_task.cancel()
+            await asyncio.gather(abort_task, return_exceptions=True)
+
+    yield await _emit_batch_end_event(
+        _emit_event,
+        trace_id=trace_id,
+        func_name=func_name,
+        iteration=iteration,
+        tool_calls=tool_calls,
+        tool_results=tool_results,
+    )
 
     yield ToolSchedulerResult(
         mutations=mutations,

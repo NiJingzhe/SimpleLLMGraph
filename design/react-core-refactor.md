@@ -158,8 +158,7 @@ Responsibilities:
 1. define the canonical context state
 2. apply pending mutations
 3. produce the next LLM-safe message list
-4. produce semantic and final display views if needed
-5. become the only legal place where context is changed
+4. become the only legal place where context is changed
 
 This is where selfref should integrate in a looser way.
 
@@ -238,17 +237,44 @@ class ContextState:
 
 @dataclass
 class CompiledContext:
-    llm_messages: MessageList
-    semantic_messages: MessageList
+    messages: MessageList
 ```
 
 Where:
 
 1. `ContextState` is the source of truth
-2. `CompiledContext.llm_messages` is the protocol-safe model input
-3. `CompiledContext.semantic_messages` is the semantic view used for hooks or finalization when needed
+2. `CompiledContext.messages` is the protocol-safe model input and the only compiled history the core should preserve
 
-The implementation does not have to use exactly these names, but this separation should exist.
+The implementation does not have to use exactly these names, but the core should preserve a single protocol-valid history rather than parallel semantic and protocol views.
+
+## Compile Source Boundary
+
+The compile boundary still owns construction of the full final message list passed into `single_call`.
+
+What changed is not whether compile builds the whole list, but where different parts of that list are sourced from.
+
+The intended split is:
+
+1. compile builds the final protocol-safe message list end to end
+2. the system message can be assembled from source-level inputs such as:
+   - `data_from_agent_config`
+   - `data_from_selfref`
+3. non-system messages should usually come from the already-built chat history / current-turn input message list
+4. selfref should not be treated as the authoritative source for rebuilding every non-system message on each turn
+
+For `llm_chat`, this means:
+
+1. the decorator can already build a full initial `message list` from `history` plus current user input
+2. compile should still produce the full final message list
+3. within compile, system construction and non-system message construction may use different sources
+4. only the system side needs special assembly for docstring, tool best practices, must-principles, template rendering, experiences, and related prompt blocks
+
+In other words:
+
+1. compile is still responsible for the entire final context
+2. system and non-system portions of that final context do not need to come from the same source of truth
+
+This distinction is important because otherwise selfref source is too easily promoted from "durable system-side source plus parsed context state" into "the authoritative full message transcript", which is not the intended architecture.
 
 ## Selfref Integration Direction
 
@@ -261,6 +287,13 @@ This works, but it makes the coupling too strong.
 ### Desired Direction
 
 `selfref` should integrate by contributing mutations and by participating in context compilation, instead of directly mutating live ReAct message history.
+
+That participation should be understood narrowly:
+
+1. selfref can contribute durable system-side source such as base prompt and experiences
+2. selfref can contribute compile-time mutations such as compaction / remember / forget
+3. compile can parse final compiled history back into selfref source form after mutation application
+4. selfref should not replace the current turn's non-system message history as the default message-building source when the decorator already has an explicit `history + current input` message list
 
 In other words:
 

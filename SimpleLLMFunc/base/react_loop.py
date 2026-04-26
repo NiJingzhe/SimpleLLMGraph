@@ -7,7 +7,9 @@ from datetime import datetime, timezone
 import time
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, cast
 
+from SimpleLLMFunc.base.compile_pipeline import compile_invocation_turn
 from SimpleLLMFunc.base.context_compile import CompiledContext, ContextState, compile_context, clone_messages
+from SimpleLLMFunc.base.context_source import CompileSource
 from SimpleLLMFunc.base.llm_call import SingleLLMCallResult, SingleLLMPhaseResultYield, execute_single_llm_phase
 from SimpleLLMFunc.base.mutation import ContextMutation
 from SimpleLLMFunc.base.react_hooks import (
@@ -35,6 +37,7 @@ from SimpleLLMFunc.observability.langfuse_client import (
     get_langfuse_trace_context,
     langfuse_client,
 )
+from SimpleLLMFunc.llm_decorator.invocation_spec import InvocationSpec
 from SimpleLLMFunc.type.message import MessageList, NormalizedMessageList
 from SimpleLLMFunc.type.tool_call import ToolDefinitionList
 
@@ -48,10 +51,59 @@ class ReactLoopState:
     total_tool_calls: int = 0
 
 
+def _build_react_loop_invocation_spec(
+    *,
+    compile_source: Optional[CompileSource],
+    messages: MessageList,
+    tool_prompt_specs: Optional[List[Dict[str, Any]]],
+    include_must_principles: bool,
+    stream: bool,
+    trace_id: str,
+    func_name: str,
+    llm_kwargs: Dict[str, Any],
+):
+    from SimpleLLMFunc.llm_decorator.invocation_spec import PromptContract, TranscriptSeed
+
+    if compile_source is not None:
+        prompt_contract = PromptContract(
+            base_instruction=compile_source.data_from_agent_config.base_system_prompt,
+            tool_prompt_specs=list(compile_source.data_from_agent_config.tool_prompt_specs),
+            include_must_principles=compile_source.data_from_agent_config.include_must_principles,
+        )
+        template_params = compile_source.data_from_agent_config.template_params
+        data_from_selfref = compile_source.data_from_selfref
+    else:
+        prompt_contract = PromptContract(
+            base_instruction="",
+            tool_prompt_specs=list(tool_prompt_specs or []),
+            include_must_principles=include_must_principles,
+        )
+        template_params = None
+        data_from_selfref = None
+
+    return InvocationSpec(
+        mode="chat",
+        func_name=func_name,
+        trace_id=trace_id,
+        docstring=prompt_contract.base_instruction,
+        bound_args={},
+        type_hints={},
+        return_type=None,
+        template_params=template_params,
+        llm_kwargs=dict(llm_kwargs),
+        stream=stream,
+        return_mode="text",
+        prompt_contract=prompt_contract,
+        transcript_seed=TranscriptSeed(initial_messages=cast(NormalizedMessageList, messages)),
+        data_from_selfref=data_from_selfref,
+    )
+
+
 async def run_react_loop(
     *,
     llm_interface: LLM_Interface,
     messages: MessageList,
+    compile_source: Optional[CompileSource] = None,
     tools: ToolDefinitionList,
     tool_map: Dict[str, Callable[..., Awaitable[Any]]],
     max_tool_calls: Optional[int],
@@ -61,6 +113,9 @@ async def run_react_loop(
     abort_signal: Optional[AbortSignal],
     hooks: Any,
     llm_kwargs: Dict[str, Any],
+    tool_prompt_specs: Optional[List[Dict[str, Any]]] = None,
+    include_must_principles: bool = False,
+    invocation_spec: Optional[InvocationSpec] = None,
 ) -> AsyncGenerator[ReactOutput, None]:
     func_name = get_current_context_attribute("function_name") or "Unknown Function"
     current_trace_id = trace_id or get_current_trace_id() or f"trace_{int(time.time() * 1000)}"
@@ -74,13 +129,17 @@ async def run_react_loop(
         func_name=func_name,
         user_task_prompt=user_task_prompt,
         messages=messages.copy(),
-        protocol_messages=messages.copy(),
         llm_kwargs=dict(llm_kwargs),
         stream=stream,
     )
     await run_react_hook(hooks, "on_run_start", state)
 
-    loop_state = ReactLoopState(context_state=ContextState(messages=state.messages))
+    loop_state = ReactLoopState(
+        context_state=ContextState(
+            messages=state.messages,
+            data_from_selfref=(compile_source.data_from_selfref if compile_source is not None else None),
+        )
+    )
 
     async def _emit_event(event: Any, **kwargs: Any) -> EventYield:
         return await event_bus.emit_and_get(event, **kwargs)
@@ -103,19 +162,38 @@ async def run_react_loop(
             await collect_react_context_mutations(hooks, state)
         )
         compiled = compile_context(loop_state.context_state, loop_state.pending_mutations)
-        loop_state.context_state = ContextState(messages=compiled.llm_messages)
+        loop_state.context_state = ContextState(
+            messages=compiled.messages,
+            data_from_selfref=compiled.data_from_selfref,
+        )
         loop_state.pending_mutations = []
 
         state.iteration = loop_state.iteration
-        state.messages = compiled.llm_messages
-        state.protocol_messages = compiled.llm_messages.copy()
+        state.messages = compiled.messages
         state.total_llm_calls = loop_state.total_llm_calls
         state.total_tool_calls = loop_state.total_tool_calls
         await run_react_hook(hooks, "before_llm_call", state)
         compiled = CompiledContext(
-            llm_messages=state.messages,
-            semantic_messages=compiled.semantic_messages,
+            messages=state.messages,
+            data_from_selfref=loop_state.context_state.data_from_selfref,
         )
+        turn_spec = invocation_spec or _build_react_loop_invocation_spec(
+            compile_source=compile_source,
+            messages=compiled.messages,
+            tool_prompt_specs=tool_prompt_specs,
+            include_must_principles=include_must_principles,
+            stream=stream,
+            trace_id=current_trace_id,
+            func_name=func_name,
+            llm_kwargs=llm_kwargs,
+        )
+        compiled_turn = compile_invocation_turn(
+            turn_spec,
+            compiled.messages,
+            [],
+            compiled.data_from_selfref,
+        )
+        llm_input_messages = compiled_turn.llm_messages
 
         if loop_state.iteration > 0:
             yield await _emit_event(
@@ -125,7 +203,7 @@ async def run_react_loop(
                     trace_id=current_trace_id,
                     func_name=func_name,
                     iteration=loop_state.iteration,
-                    current_messages=compiled.llm_messages.copy(),
+                    current_messages=llm_input_messages.copy(),
                 )
             )
 
@@ -136,7 +214,7 @@ async def run_react_loop(
         with langfuse_client.start_as_current_observation(
             as_type="generation",
             name=f"{func_name}_llm_call_{loop_state.total_llm_calls}",
-            input=compiled.llm_messages,
+            input=llm_input_messages,
             model=llm_interface.model_name,
             model_parameters=model_parameters,
             metadata=coerce_langfuse_metadata(
@@ -151,7 +229,7 @@ async def run_react_loop(
         ) as generation_span:
             async for output in execute_single_llm_phase(
                 llm_interface=llm_interface,
-                messages=compiled.llm_messages,
+                messages=llm_input_messages,
                 tools=tools,
                 llm_kwargs=llm_kwargs,
                 trace_id=current_trace_id,
@@ -169,8 +247,7 @@ async def run_react_loop(
                     continue
                 yield output
 
-            state.messages = compiled.llm_messages
-            state.protocol_messages = compiled.llm_messages.copy()
+            state.messages = compiled.messages
             state.last_response = llm_result.response
             state.content = llm_result.content
             state.tool_calls = list(llm_result.tool_calls)
@@ -186,10 +263,12 @@ async def run_react_loop(
 
         if llm_result.aborted:
             compiled_final = compile_context(loop_state.context_state, llm_mutations)
-            final_messages = compiled_final.semantic_messages
+            loop_state.context_state = ContextState(
+                messages=clone_messages(compiled_final.messages),
+                data_from_selfref=compiled_final.data_from_selfref,
+            )
             state.iteration = loop_state.iteration
-            state.messages = final_messages
-            state.protocol_messages = compiled_final.llm_messages.copy()
+            state.messages = compiled_final.messages
             state.final_response = llm_result.content
             state.aborted = True
             await run_react_hook(hooks, "before_finalize", state)
@@ -213,9 +292,12 @@ async def run_react_loop(
 
         if not llm_result.tool_calls:
             compiled_final = compile_context(loop_state.context_state, llm_mutations)
+            loop_state.context_state = ContextState(
+                messages=clone_messages(compiled_final.messages),
+                data_from_selfref=compiled_final.data_from_selfref,
+            )
             state.iteration = loop_state.iteration
-            state.messages = compiled_final.semantic_messages
-            state.protocol_messages = compiled_final.llm_messages.copy()
+            state.messages = compiled_final.messages
             state.final_response = llm_result.content
             state.aborted = False
             await run_react_hook(hooks, "before_finalize", state)
@@ -241,15 +323,28 @@ async def run_react_loop(
             final_call_result = SingleLLMCallResult()
             loop_state.total_llm_calls += 1
             state.iteration = loop_state.iteration + 1
-            state.messages = final_compiled.llm_messages
-            state.protocol_messages = final_compiled.llm_messages.copy()
+            state.messages = final_compiled.messages
             state.total_llm_calls = loop_state.total_llm_calls
             await run_react_hook(hooks, "before_llm_call", state)
 
             with langfuse_client.start_as_current_observation(
                 as_type="generation",
                 name=f"{func_name}_final_llm_call",
-                input=state.messages,
+                input=compile_invocation_turn(
+                    invocation_spec or _build_react_loop_invocation_spec(
+                        compile_source=compile_source,
+                        messages=state.messages,
+                        tool_prompt_specs=tool_prompt_specs,
+                        include_must_principles=include_must_principles,
+                        stream=False,
+                        trace_id=current_trace_id,
+                        func_name=func_name,
+                        llm_kwargs=llm_kwargs,
+                    ),
+                    state.messages,
+                    [],
+                    final_compiled.data_from_selfref,
+                ).llm_messages,
                 model=llm_interface.model_name,
                 model_parameters=model_parameters,
                 metadata=coerce_langfuse_metadata(
@@ -262,9 +357,24 @@ async def run_react_loop(
                 completion_start_time=datetime.now(timezone.utc),
                 trace_context=trace_context,
             ) as generation_span:
+                final_llm_input = compile_invocation_turn(
+                    invocation_spec or _build_react_loop_invocation_spec(
+                        compile_source=compile_source,
+                        messages=state.messages,
+                        tool_prompt_specs=tool_prompt_specs,
+                        include_must_principles=include_must_principles,
+                        stream=False,
+                        trace_id=current_trace_id,
+                        func_name=func_name,
+                        llm_kwargs=llm_kwargs,
+                    ),
+                    state.messages,
+                    [],
+                    final_compiled.data_from_selfref,
+                ).llm_messages
                 async for output in execute_single_llm_phase(
                     llm_interface=llm_interface,
-                    messages=state.messages,
+                    messages=final_llm_input,
                     tools=None,
                     llm_kwargs=llm_kwargs,
                     trace_id=current_trace_id,
@@ -279,8 +389,7 @@ async def run_react_loop(
                         continue
                     yield output
 
-                state.messages = final_compiled.llm_messages
-                state.protocol_messages = final_compiled.llm_messages.copy()
+                state.messages = final_compiled.messages
                 state.last_response = final_call_result.response
                 state.content = final_call_result.content
                 state.tool_calls = list(final_call_result.tool_calls)
@@ -297,9 +406,12 @@ async def run_react_loop(
 
             final_mutations = list(final_call_result.mutations)
             compiled_final = compile_context(loop_state.context_state, final_mutations)
+            loop_state.context_state = ContextState(
+                messages=clone_messages(compiled_final.messages),
+                data_from_selfref=compiled_final.data_from_selfref,
+            )
             state.iteration = loop_state.iteration + 1
-            state.messages = compiled_final.semantic_messages
-            state.protocol_messages = compiled_final.llm_messages.copy()
+            state.messages = compiled_final.messages
             state.final_response = final_call_result.content
             state.aborted = False
             await run_react_hook(hooks, "before_finalize", state)
@@ -321,12 +433,11 @@ async def run_react_loop(
             return
 
         compiled_tool_context = CompiledContext(
-            llm_messages=compiled.llm_messages.copy(),
-            semantic_messages=compiled.semantic_messages.copy(),
+            messages=compiled.messages.copy(),
+            data_from_selfref=compiled.data_from_selfref,
         )
         state.iteration = loop_state.iteration + 1
-        state.messages = compiled_tool_context.llm_messages
-        state.protocol_messages = compiled_tool_context.llm_messages.copy()
+        state.messages = compiled_tool_context.messages
         await run_react_hook(hooks, "before_tool_batch", state)
         pre_tool_messages = clone_messages(state.messages)
 
@@ -339,7 +450,6 @@ async def run_react_loop(
             func_name=func_name,
             iteration=loop_state.iteration + 1,
             event_bus=event_bus,
-            enable_event=True,
             abort_signal=abort_signal,
         ):
             if isinstance(item, EventYield):
@@ -354,19 +464,24 @@ async def run_react_loop(
 
         if active_messages_after_tools != pre_tool_messages:
             state.messages = active_messages_after_tools
-            state.protocol_messages = clone_messages(active_messages_after_tools)
         else:
             compiled_after_tools = compile_context(
                 loop_state.context_state,
                 loop_state.pending_mutations,
             )
-            state.messages = compiled_after_tools.llm_messages
-            state.protocol_messages = compiled_after_tools.llm_messages.copy()
+            state.messages = compiled_after_tools.messages
         await run_react_hook(hooks, "after_tool_batch", state)
         # Hooks may replace the compiled context entirely (for example selfref
         # compaction). After this point the hook-updated state becomes the next
         # baseline, and no pre-hook pending mutations should be replayed again.
-        loop_state.context_state = ContextState(messages=clone_messages(state.messages))
+        loop_state.context_state = ContextState(
+            messages=clone_messages(state.messages),
+            data_from_selfref=(
+                compiled_after_tools.data_from_selfref
+                if active_messages_after_tools == pre_tool_messages
+                else compiled_tool_context.data_from_selfref
+            ),
+        )
         loop_state.pending_mutations = []
 
         yield await _emit_event(

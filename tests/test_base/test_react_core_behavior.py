@@ -8,6 +8,10 @@ import pytest
 from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, Choice as ChunkChoice, ChoiceDelta
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
+from openai.types.chat.chat_completion_message_function_tool_call import (
+    ChatCompletionMessageFunctionToolCall,
+    Function as OpenAIFunction,
+)
 
 from SimpleLLMFunc.base.llm_call import execute_single_llm_phase
 from SimpleLLMFunc.base.mutation import AssistantMessageMutation, AssistantTruncatedMutation
@@ -24,6 +28,32 @@ def _completion(content: str) -> ChatCompletion:
                 finish_reason="stop",
                 index=0,
                 message=ChatCompletionMessage(role="assistant", content=content),
+            )
+        ],
+        created=123456,
+        model="test-model",
+        object="chat.completion",
+    )
+
+
+def _tool_completion(content: str) -> ChatCompletion:
+    return ChatCompletion(
+        id="test-id",
+        choices=[
+            Choice(
+                finish_reason="tool_calls",
+                index=0,
+                message=ChatCompletionMessage(
+                    role="assistant",
+                    content=content,
+                    tool_calls=[
+                        ChatCompletionMessageFunctionToolCall(
+                            id="call_123",
+                            type="function",
+                            function=OpenAIFunction(name="test_tool", arguments='{"arg":"value"}'),
+                        )
+                    ],
+                ),
             )
         ],
         created=123456,
@@ -135,3 +165,30 @@ async def test_execute_single_llm_phase_non_streaming_maps_content_to_assistant_
 
     mutation = AssistantMessageMutation(content=content)
     assert mutation.content == "done"
+
+
+@pytest.mark.asyncio
+async def test_execute_single_llm_phase_non_streaming_keeps_content_with_tool_calls() -> None:
+    llm = MagicMock()
+    llm.chat = AsyncMock(return_value=_tool_completion("Let me check that."))
+
+    result = None
+    async for output in execute_single_llm_phase(
+        llm_interface=llm,
+        messages=[{"role": "user", "content": "hello"}],
+        tools=None,
+        llm_kwargs={},
+        trace_id="trace-1",
+        func_name="test_func",
+        iteration=0,
+        stream=False,
+    ):
+        if getattr(output, "result", None) is not None:
+            result = output.result
+
+    assert result is not None
+    assert len(result.mutations) == 1
+    mutation = result.mutations[0]
+    assert isinstance(mutation, AssistantMessageMutation)
+    assert mutation.content == "Let me check that."
+    assert mutation.tool_calls[0]["id"] == "call_123"

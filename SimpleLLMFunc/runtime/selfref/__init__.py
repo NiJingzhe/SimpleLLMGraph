@@ -12,6 +12,7 @@ from .primitives import (
     build_self_reference_pack,
     register_self_reference_primitives,
 )
+from .session import SelfRefSession, resolve_self_reference_key
 from .state import (
     SELF_REFERENCE_FORK_TASK_TEMPLATE_PARAM,
     SELF_REFERENCE_KEY_OVERRIDE_TEMPLATE_PARAM,
@@ -27,6 +28,8 @@ __all__ = [
     "SelfReferenceMemoryHandle",
     "SelfReferenceMemoryProxy",
     "SelfReferenceInstanceHandle",
+    "SelfRefSession",
+    "resolve_self_reference_key",
     "SELF_REFERENCE_KEY_OVERRIDE_TEMPLATE_PARAM",
     "SELF_REFERENCE_TOOLKIT_OVERRIDE_TEMPLATE_PARAM",
     "SELF_REFERENCE_FORK_TASK_TEMPLATE_PARAM",
