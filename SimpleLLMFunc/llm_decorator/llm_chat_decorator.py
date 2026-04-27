@@ -25,7 +25,7 @@ from SimpleLLMFunc.llm_decorator.utils import (
     process_tools,
     remove_tool_best_practices_prompt_block,
 )
-from SimpleLLMFunc.base.context_source import CompileSource, DataFromAgentConfig
+from SimpleLLMFunc.base.types import CompileSource, DataFromAgentConfig
 from SimpleLLMFunc.interface.llm_interface import LLM_Interface
 from SimpleLLMFunc.runtime.selfref.state import (
     MemoryHistory,

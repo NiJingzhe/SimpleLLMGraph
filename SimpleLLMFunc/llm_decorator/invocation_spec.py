@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Mapping, Optional
 
-from SimpleLLMFunc.base.context_source import DataFromSelfRef
+from SimpleLLMFunc.base.types import DataFromSelfRef
 from SimpleLLMFunc.type.message import NormalizedMessageList
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import cast
 
 from SimpleLLMFunc.base.compile_pipeline import build_compiled_messages_from_source
-from SimpleLLMFunc.base.context_source import CompileSource, DataFromAgentConfig, DataFromSelfRef
+from SimpleLLMFunc.base.types import CompileSource, DataFromAgentConfig, DataFromSelfRef
 from SimpleLLMFunc.base.llm_input_render import render_llm_input_messages
 from SimpleLLMFunc.runtime.selfref.context_ops import build_context_messages_from_selfref_data
 from SimpleLLMFunc.type.message import NormalizedMessageList

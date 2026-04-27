@@ -17,7 +17,7 @@ from SimpleLLMFunc.base.messages import (
     validate_message_shape,
     validate_tool_linkage,
 )
-from SimpleLLMFunc.base.context_source import DataFromSelfRef
+from SimpleLLMFunc.base.types import DataFromSelfRef
 from SimpleLLMFunc.base.react_hooks import ReActHookExecutionContext
 from SimpleLLMFunc.type.message import NormalizedMessageList, NormalizedMessageParam
 from SimpleLLMFunc.runtime.primitives import RuntimePrimitiveBackend

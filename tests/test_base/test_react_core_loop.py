@@ -8,7 +8,7 @@ from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
 from SimpleLLMFunc.base.react_loop import run_react_loop
-from SimpleLLMFunc.base.context_source import CompileSource, DataFromAgentConfig, DataFromSelfRef
+from SimpleLLMFunc.base.types import CompileSource, DataFromAgentConfig, DataFromSelfRef
 from SimpleLLMFunc.hooks.events import ReactEndEvent, ReActEventType
 from SimpleLLMFunc.hooks.stream import EventYield
 from openai.types.chat.chat_completion_message_function_tool_call import (

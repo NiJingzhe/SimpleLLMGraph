@@ -5,9 +5,9 @@ from SimpleLLMFunc.base.context_compile import (
     apply_mutations,
     compile_context,
 )
-from SimpleLLMFunc.base.context_source import CompileSource, DataFromAgentConfig, DataFromSelfRef
+from SimpleLLMFunc.base.types import CompileSource, DataFromAgentConfig, DataFromSelfRef
 from SimpleLLMFunc.base.llm_call import SingleLLMCallResult
-from SimpleLLMFunc.base.mutation import (
+from SimpleLLMFunc.base.types import (
     AssistantMessageMutation,
     AssistantTruncatedMutation,
     ContextReplaceMutation,

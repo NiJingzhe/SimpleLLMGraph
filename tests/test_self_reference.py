@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from SimpleLLMFunc.base.react_hooks import ReActHookExecutionContext
-from SimpleLLMFunc.base.context_source import DataFromSelfRef
+from SimpleLLMFunc.base.types import DataFromSelfRef
 from SimpleLLMFunc.hooks.events import CustomEvent, ReActEventType
 from SimpleLLMFunc.hooks.stream import EventOrigin, EventYield
 from SimpleLLMFunc.runtime.selfref import SelfReference

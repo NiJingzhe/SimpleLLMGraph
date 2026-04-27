@@ -23,34 +23,42 @@ def test_compile_pipeline_has_no_unused_llm_request_wrapper() -> None:
     assert "LLMRequest" not in getattr(module, "__all__", [])
 
 
-def test_react_loop_entrypoint_lives_in_react_loop_module() -> None:
-    """Keep base.ReAct as compatibility only; main loop lives with core loop code."""
+def test_base_does_not_keep_name_only_compatibility_modules() -> None:
+    """If the source module can export directly, base should not keep alias-only files."""
 
-    react_loop = importlib.import_module("SimpleLLMFunc.base.react_loop")
-    compat_react = importlib.import_module("SimpleLLMFunc.base.ReAct")
+    forbidden = [
+        BASE_ROOT / "ReAct.py",
+        BASE_ROOT / "context_source.py",
+        BASE_ROOT / "mutation.py",
+    ]
 
-    assert hasattr(react_loop, "ReAct_loop")
-    assert compat_react.ReAct_loop is react_loop.ReAct_loop
-    assert "async def ReAct_loop" not in inspect.getsource(compat_react)
-
-
-def test_mutation_module_is_compatibility_only() -> None:
-    mutation_module = importlib.import_module("SimpleLLMFunc.base.mutation")
-
-    assert "@dataclass" not in inspect.getsource(mutation_module)
+    assert [path for path in forbidden if path.exists()] == []
 
 
-def test_internal_modules_use_react_loop_not_base_react_wrapper() -> None:
+def test_internal_modules_use_direct_source_modules() -> None:
     import SimpleLLMFunc.llm_decorator.llm_chat_decorator as chat_module
     import SimpleLLMFunc.llm_decorator.llm_function_decorator as function_module
     import SimpleLLMFunc as package_root
+    import SimpleLLMFunc.runtime.selfref.context_ops as selfref_context_ops
+    import SimpleLLMFunc.runtime.selfref.session as selfref_session
+    import SimpleLLMFunc.runtime.selfref.state as selfref_state
 
-    assert "base.ReAct" not in inspect.getsource(chat_module)
-    assert "base.ReAct" not in inspect.getsource(function_module)
-    assert "base.ReAct" not in inspect.getsource(package_root)
+    for module in [
+        chat_module,
+        function_module,
+        package_root,
+        selfref_context_ops,
+        selfref_session,
+        selfref_state,
+    ]:
+        source = inspect.getsource(module)
+        assert "base.ReAct" not in source
+        assert "base.context_source" not in source
+        assert "base.mutation" not in source
 
 
-def test_base_init_does_not_advertise_removed_compatibility_modules() -> None:
+def test_base_init_advertises_types_not_removed_compatibility_modules() -> None:
     import SimpleLLMFunc.base as base
 
     assert "ReAct" not in getattr(base, "__all__", [])
+    assert "types" in getattr(base, "__all__", [])

@@ -1,4 +1,4 @@
-"""Event-only compatibility tests for base.ReAct entrypoints."""
+"""Event-only tests for base.react_loop entrypoints."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from openai.types.chat.chat_completion_message_function_tool_call import (
 )
 from openai.types.completion_usage import CompletionUsage
 
-from SimpleLLMFunc.base.ReAct import ReAct_loop, execute_single_llm_call
+from SimpleLLMFunc.base.react_loop import ReAct_loop, execute_single_llm_call
 from SimpleLLMFunc.hooks.abort import AbortSignal
 from SimpleLLMFunc.hooks.events import LLMCallEndEvent, ReactEndEvent, ReActEventType
 from SimpleLLMFunc.hooks.stream import EventYield, ResponseYield
@@ -426,8 +426,8 @@ class TestExecuteLLM:
 
 class TestExecuteSingleLLMCall:
     @pytest.mark.asyncio
-    @patch("SimpleLLMFunc.base.ReAct.langfuse_client")
-    @patch("SimpleLLMFunc.base.ReAct.get_current_context_attribute")
+    @patch("SimpleLLMFunc.base.react_loop.langfuse_client")
+    @patch("SimpleLLMFunc.base.react_loop.get_current_context_attribute")
     async def test_non_streaming_returns_final_llm_call_end_event(
         self,
         mock_get_context: MagicMock,
@@ -458,8 +458,8 @@ class TestExecuteSingleLLMCall:
         assert events[-1].tool_calls == []
 
     @pytest.mark.asyncio
-    @patch("SimpleLLMFunc.base.ReAct.langfuse_client")
-    @patch("SimpleLLMFunc.base.ReAct.get_current_context_attribute")
+    @patch("SimpleLLMFunc.base.react_loop.langfuse_client")
+    @patch("SimpleLLMFunc.base.react_loop.get_current_context_attribute")
     async def test_streaming_accumulates_content_and_tool_calls(
         self,
         mock_get_context: MagicMock,

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from SimpleLLMFunc.base.mutation import ToolCancelledMutation, ToolResultMutation, UserMessageMutation
+from SimpleLLMFunc.base.types import ToolCancelledMutation, ToolResultMutation, UserMessageMutation
 from SimpleLLMFunc.base.tool_scheduler import ToolSchedulerResult, schedule_tool_batch
 from SimpleLLMFunc.hooks.abort import AbortSignal
 from SimpleLLMFunc.hooks.event_bus import EventBus

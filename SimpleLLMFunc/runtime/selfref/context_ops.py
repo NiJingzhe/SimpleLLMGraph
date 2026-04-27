@@ -4,7 +4,7 @@ import copy
 import re
 from typing import Any, Dict, List, Optional, cast
 
-from SimpleLLMFunc.base.context_source import DataFromSelfRef
+from SimpleLLMFunc.base.types import DataFromSelfRef
 from SimpleLLMFunc.type.message import NormalizedMessageList
 
 MemoryHistory = List[Dict[str, Any]]

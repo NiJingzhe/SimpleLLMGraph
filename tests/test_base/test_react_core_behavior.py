@@ -14,7 +14,7 @@ from openai.types.chat.chat_completion_message_function_tool_call import (
 )
 
 from SimpleLLMFunc.base.llm_call import execute_single_llm_phase
-from SimpleLLMFunc.base.mutation import AssistantMessageMutation, AssistantTruncatedMutation
+from SimpleLLMFunc.base.types import AssistantMessageMutation, AssistantTruncatedMutation
 from SimpleLLMFunc.hooks.abort import AbortSignal
 from SimpleLLMFunc.hooks.events import LLMCallEndEvent, LLMCallStartEvent, ReActEventType
 from SimpleLLMFunc.hooks.stream import EventYield, ResponseYield

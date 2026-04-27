@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from SimpleLLMFunc.base.context_source import CompileSource, DataFromAgentConfig, DataFromSelfRef
+from SimpleLLMFunc.base.types import CompileSource, DataFromAgentConfig, DataFromSelfRef
 
 
 def test_context_source_types_hold_agent_and_selfref_source_data() -> None:

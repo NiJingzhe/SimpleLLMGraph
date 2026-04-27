@@ -217,7 +217,7 @@ def test_invocation_builder_does_not_import_steps_layer() -> None:
 async def test_event_stream_is_the_only_chat_runtime_surface_and_function_has_stream_accessor() -> None:
     """Chat is stream-only; llm_function returns values and exposes events via .stream."""
 
-    from SimpleLLMFunc.base.ReAct import ReAct_loop
+    from SimpleLLMFunc.base.react_loop import ReAct_loop
     import SimpleLLMFunc.llm_decorator.llm_chat_decorator as chat_module
     import SimpleLLMFunc.llm_decorator.llm_function_decorator as function_module
     from SimpleLLMFunc.hooks.stream import EventYield, ResponseYield, is_response_yield

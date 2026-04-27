@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from SimpleLLMFunc.base.context_source import DataFromSelfRef
+from SimpleLLMFunc.base.types import DataFromSelfRef
 from SimpleLLMFunc.runtime.selfref.context_ops import (
     build_context_messages_from_selfref_data,
     build_context_messages_from_state_data,

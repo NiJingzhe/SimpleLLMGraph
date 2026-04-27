@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional, cast
 
-from SimpleLLMFunc.base.context_source import DataFromSelfRef
-from SimpleLLMFunc.base.mutation import (
+from SimpleLLMFunc.base.types import DataFromSelfRef
+from SimpleLLMFunc.base.types import (
     ContextMutation,
     ContextSummaryMutation,
     ExperienceForgetMutation,
