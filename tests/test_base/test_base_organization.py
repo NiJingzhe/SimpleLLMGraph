@@ -40,6 +40,16 @@ def test_mutation_module_is_compatibility_only() -> None:
     assert "@dataclass" not in inspect.getsource(mutation_module)
 
 
+def test_internal_modules_use_react_loop_not_base_react_wrapper() -> None:
+    import SimpleLLMFunc.llm_decorator.llm_chat_decorator as chat_module
+    import SimpleLLMFunc.llm_decorator.llm_function_decorator as function_module
+    import SimpleLLMFunc as package_root
+
+    assert "base.ReAct" not in inspect.getsource(chat_module)
+    assert "base.ReAct" not in inspect.getsource(function_module)
+    assert "base.ReAct" not in inspect.getsource(package_root)
+
+
 def test_base_init_does_not_advertise_removed_compatibility_modules() -> None:
     import SimpleLLMFunc.base as base
 

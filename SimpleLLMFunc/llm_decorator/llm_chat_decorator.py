@@ -16,7 +16,7 @@ from typing import (
     Literal,
 )
 
-from SimpleLLMFunc.base.ReAct import ReAct_loop
+from SimpleLLMFunc.base.react_loop import ReAct_loop
 from SimpleLLMFunc.llm_decorator.signature import parse_function_signature, setup_log_context
 from SimpleLLMFunc.llm_decorator.invocation_builder import build_chat_invocation_spec
 from SimpleLLMFunc.runtime.selfref.session import SelfRefSession

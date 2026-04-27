@@ -661,7 +661,7 @@ async def test_llm_chat_runtime_context_forget_uses_mutation_only_path() -> None
             return_value=_DummyObservation(),
         ),
         patch(
-            "SimpleLLMFunc.base.ReAct.langfuse_client.start_as_current_observation",
+            "SimpleLLMFunc.base.react_loop.langfuse_client.start_as_current_observation",
             return_value=_DummyObservation(),
         ),
     ):
@@ -736,7 +736,7 @@ async def test_llm_chat_runtime_context_compact_rewrites_final_messages() -> Non
             return_value=_DummyObservation(),
         ),
         patch(
-            "SimpleLLMFunc.base.ReAct.langfuse_client.start_as_current_observation",
+            "SimpleLLMFunc.base.react_loop.langfuse_client.start_as_current_observation",
             return_value=_DummyObservation(),
         ),
     ):
@@ -827,7 +827,7 @@ async def test_llm_chat_runtime_context_compact_can_remember_experience() -> Non
             return_value=_DummyObservation(),
         ),
         patch(
-            "SimpleLLMFunc.base.ReAct.langfuse_client.start_as_current_observation",
+            "SimpleLLMFunc.base.react_loop.langfuse_client.start_as_current_observation",
             return_value=_DummyObservation(),
         ),
     ):
@@ -920,7 +920,7 @@ async def test_llm_chat_runtime_context_compact_applies_before_next_llm_call() -
             return_value=_DummyObservation(),
         ),
         patch(
-            "SimpleLLMFunc.base.ReAct.langfuse_client.start_as_current_observation",
+            "SimpleLLMFunc.base.react_loop.langfuse_client.start_as_current_observation",
             return_value=_DummyObservation(),
         ),
     ):
