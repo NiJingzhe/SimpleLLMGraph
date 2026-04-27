@@ -13,7 +13,7 @@ from typing import Any, Optional
 
 from openai.types.completion_usage import CompletionUsage
 
-from SimpleLLMFunc.base.mutation import ContextMutation
+from SimpleLLMFunc.base.types import ContextMutation
 from SimpleLLMFunc.type import MessageList
 
 

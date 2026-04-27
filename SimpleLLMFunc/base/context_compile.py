@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import copy
 from typing import Any, Dict, List, Optional, cast
 
-from SimpleLLMFunc.base.context_source import DataFromSelfRef
+from SimpleLLMFunc.base.types import CompiledContext, ContextState, DataFromSelfRef
 from SimpleLLMFunc.base.messages.assistant import (
     build_assistant_response_message,
     build_assistant_tool_message,
 )
 from SimpleLLMFunc.base.messages.validation import validate_tool_linkage
-from SimpleLLMFunc.base.mutation import (
+from SimpleLLMFunc.base.types import (
     AssistantMessageMutation,
     AssistantTruncatedMutation,
     ContextMutation,
@@ -25,20 +24,6 @@ from SimpleLLMFunc.base.mutation import (
     UserMessageMutation,
 )
 from SimpleLLMFunc.type.message import NormalizedMessageList, NormalizedMessageParam
-
-
-@dataclass
-class ContextState:
-    messages: NormalizedMessageList
-    data_from_selfref: Optional[DataFromSelfRef] = None
-    pending_mutations: List[ContextMutation] = field(default_factory=list)
-
-
-@dataclass
-class CompiledContext:
-    messages: NormalizedMessageList
-    data_from_selfref: Optional[DataFromSelfRef] = None
-
 
 def clone_messages(messages: NormalizedMessageList) -> NormalizedMessageList:
     return [copy.deepcopy(message) for message in messages]

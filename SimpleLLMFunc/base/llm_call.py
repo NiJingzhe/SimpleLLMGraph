@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
 import inspect
 import time
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, cast
 
 from openai.types.completion_usage import CompletionUsage
 
-from SimpleLLMFunc.base.mutation import AssistantMessageMutation, AssistantTruncatedMutation
+from SimpleLLMFunc.base.types import (
+    AssistantMessageMutation,
+    AssistantTruncatedMutation,
+    ContextMutation,
+    SingleLLMCallResult,
+    SingleLLMPhaseResultYield,
+)
 from SimpleLLMFunc.base.post_process import (
     extract_content_from_response,
     extract_content_from_stream_response,
@@ -36,27 +41,8 @@ from SimpleLLMFunc.interface.llm_interface import LLM_Interface
 from SimpleLLMFunc.type.message import MessageList
 from SimpleLLMFunc.type.tool_call import ToolCall, ToolDefinitionList, dict_to_tool_call
 
-from SimpleLLMFunc.base.mutation import ContextMutation
 from SimpleLLMFunc.base.messages import extract_usage_from_response
 from SimpleLLMFunc.logger.logger import get_current_context_attribute
-
-
-@dataclass
-class SingleLLMCallResult:
-    response: Any = None
-    content: str = ""
-    tool_calls: List[Dict[str, Any]] = field(default_factory=list)
-    reasoning_details: List[Dict[str, Any]] = field(default_factory=list)
-    usage: Optional[CompletionUsage] = None
-    execution_time: float = 0.0
-    mutations: List[ContextMutation] = field(default_factory=list)
-    aborted: bool = False
-
-
-@dataclass
-class SingleLLMPhaseResultYield:
-    result: SingleLLMCallResult
-
 
 def build_llm_call_end_event(
     *,

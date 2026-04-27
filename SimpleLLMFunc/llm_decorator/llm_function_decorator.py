@@ -39,7 +39,7 @@ from typing import (
     AsyncGenerator,
 )
 
-from SimpleLLMFunc.base.ReAct import ReAct_loop
+from SimpleLLMFunc.base.react_loop import ReAct_loop
 from SimpleLLMFunc.base.post_process import process_response
 from SimpleLLMFunc.llm_decorator.signature import parse_function_signature, setup_log_context
 from SimpleLLMFunc.llm_decorator.invocation_builder import build_function_invocation_spec

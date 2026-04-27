@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
 import json
 import time
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, cast
 
-from SimpleLLMFunc.base.mutation import ContextMutation, ToolCancelledMutation, ToolResultMutation, UserMessageMutation
 from SimpleLLMFunc.base.tool_call.execution import _execute_single_tool_call
 from SimpleLLMFunc.base.tool_call.extraction import parse_tool_call_arguments
+from SimpleLLMFunc.base.types import (
+    ContextMutation,
+    ToolCancelledMutation,
+    ToolResultMutation,
+    ToolSchedulerResult,
+    UserMessageMutation,
+)
 from SimpleLLMFunc.hooks.abort import AbortSignal
 from SimpleLLMFunc.hooks.event_bus import EventBus
 from SimpleLLMFunc.hooks.event_emitter import ToolEventEmitter
@@ -28,14 +33,6 @@ from SimpleLLMFunc.observability.langfuse_client import get_langfuse_trace_conte
 from SimpleLLMFunc.type.hooks import ToolResult
 from SimpleLLMFunc.type.message import NormalizedMessageList
 from SimpleLLMFunc.type.tool_call import ToolCall, dict_to_tool_call
-
-
-@dataclass
-class ToolSchedulerResult:
-    mutations: List[ContextMutation] = field(default_factory=list)
-    total_tool_calls: int = 0
-    aborted: bool = False
-
 
 async def schedule_tool_batch(
     *,

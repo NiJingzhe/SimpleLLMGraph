@@ -2,22 +2,29 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import time
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, cast
 
 from SimpleLLMFunc.base.compile_pipeline import compile_invocation_turn
-from SimpleLLMFunc.base.context_compile import CompiledContext, ContextState, compile_context, clone_messages
-from SimpleLLMFunc.base.context_source import CompileSource
-from SimpleLLMFunc.base.llm_call import SingleLLMCallResult, SingleLLMPhaseResultYield, execute_single_llm_phase
-from SimpleLLMFunc.base.mutation import ContextMutation
+from SimpleLLMFunc.base.context_compile import compile_context, clone_messages
+from SimpleLLMFunc.base.llm_call import execute_single_llm_phase
+from SimpleLLMFunc.base.types import (
+    CompileSource,
+    CompiledContext,
+    ContextState,
+    ReactLoopState,
+    SingleLLMCallResult,
+    SingleLLMPhaseResultYield,
+    ToolSchedulerResult,
+)
+from SimpleLLMFunc.base.types import ContextMutation
 from SimpleLLMFunc.base.react_hooks import (
     ReActHookExecutionContext,
     collect_react_context_mutations,
     run_react_hook,
 )
-from SimpleLLMFunc.base.tool_scheduler import ToolSchedulerResult, schedule_tool_batch
+from SimpleLLMFunc.base.tool_scheduler import schedule_tool_batch
 from SimpleLLMFunc.hooks.abort import AbortSignal
 from SimpleLLMFunc.hooks.event_bus import EventBus
 from SimpleLLMFunc.hooks.events import (
@@ -40,16 +47,6 @@ from SimpleLLMFunc.observability.langfuse_client import (
 from SimpleLLMFunc.llm_decorator.invocation_spec import InvocationSpec
 from SimpleLLMFunc.type.message import MessageList, NormalizedMessageList
 from SimpleLLMFunc.type.tool_call import ToolDefinitionList
-
-
-@dataclass
-class ReactLoopState:
-    context_state: ContextState
-    pending_mutations: List[ContextMutation] = field(default_factory=list)
-    iteration: int = 0
-    total_llm_calls: int = 0
-    total_tool_calls: int = 0
-
 
 def _build_react_loop_invocation_spec(
     *,
@@ -97,6 +94,38 @@ def _build_react_loop_invocation_spec(
         transcript_seed=TranscriptSeed(initial_messages=cast(NormalizedMessageList, messages)),
         data_from_selfref=data_from_selfref,
     )
+
+
+async def execute_single_llm_call(
+    llm_interface: LLM_Interface,
+    messages: MessageList,
+    tools: ToolDefinitionList = None,
+    stream: bool = False,
+    trace_id: str = "",
+    emit_event: Optional[Any] = None,
+    iteration: int = 0,
+    abort_signal: Optional[AbortSignal] = None,
+    **llm_kwargs: Any,
+) -> AsyncGenerator[Any, None]:
+    """Public single-call helper that yields LLM call events only."""
+
+    func_name = get_current_context_attribute("function_name") or "Unknown Function"
+    current_trace_id = trace_id or get_current_trace_id() or ""
+
+    async for output in execute_single_llm_phase(
+        llm_interface=llm_interface,
+        messages=messages,
+        tools=tools,
+        llm_kwargs=dict(llm_kwargs),
+        trace_id=current_trace_id,
+        func_name=func_name,
+        iteration=iteration,
+        stream=stream,
+        emit_event=emit_event,
+        abort_signal=abort_signal,
+    ):
+        if isinstance(output, EventYield):
+            yield output.event
 
 
 async def run_react_loop(
@@ -504,4 +533,43 @@ async def run_react_loop(
         )
 
 
-__all__ = ["ReactLoopState", "run_react_loop"]
+async def ReAct_loop(
+    llm_interface: LLM_Interface,
+    messages: MessageList,
+    tools: ToolDefinitionList,
+    tool_map: Dict[str, Any],
+    max_tool_calls: Optional[int],
+    stream: bool = False,
+    trace_id: str = "",
+    user_task_prompt: str = "",
+    abort_signal: Optional[AbortSignal] = None,
+    hooks: Any = None,
+    compile_source: Optional[CompileSource] = None,
+    tool_prompt_specs: Optional[list[Dict[str, Any]]] = None,
+    include_must_principles: bool = False,
+    invocation_spec: Optional[InvocationSpec] = None,
+    **llm_kwargs: Any,
+) -> AsyncGenerator[ReactOutput, None]:
+    """Event-only ReAct loop public entrypoint."""
+
+    async for output in run_react_loop(
+        llm_interface=llm_interface,
+        messages=messages,
+        compile_source=compile_source,
+        tools=tools,
+        tool_map=tool_map,
+        max_tool_calls=max_tool_calls,
+        stream=stream,
+        trace_id=trace_id,
+        user_task_prompt=user_task_prompt,
+        abort_signal=abort_signal,
+        hooks=hooks,
+        llm_kwargs=dict(llm_kwargs),
+        tool_prompt_specs=tool_prompt_specs,
+        include_must_principles=include_must_principles,
+        invocation_spec=invocation_spec,
+    ):
+        yield output
+
+
+__all__ = ["ReAct_loop", "ReactLoopState", "execute_single_llm_call", "run_react_loop"]

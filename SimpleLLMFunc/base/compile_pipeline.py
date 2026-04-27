@@ -7,35 +7,20 @@ This module is the formal Stage 2 compile boundary. Both ``llm_function`` and
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, cast
 
 from SimpleLLMFunc.base.context_compile import apply_mutations, clone_messages
-from SimpleLLMFunc.base.context_source import CompileSource, DataFromSelfRef
+from SimpleLLMFunc.base.types import (
+    CompileSource,
+    CompiledTurnContext,
+    DataFromSelfRef,
+    ReducedTurnContext,
+)
 from SimpleLLMFunc.base.llm_input_render import render_llm_input_messages
-from SimpleLLMFunc.base.mutation import ContextMutation
+from SimpleLLMFunc.base.types import ContextMutation
 from SimpleLLMFunc.llm_decorator.invocation_spec import InvocationSpec, PromptContract
 from SimpleLLMFunc.runtime.selfref.context_ops import render_system_prompt_with_experiences
 from SimpleLLMFunc.type.message import NormalizedMessageList, NormalizedMessageParam
-
-
-@dataclass(frozen=True)
-class ReducedTurnContext:
-    transcript: NormalizedMessageList
-    selfref_snapshot: Optional[DataFromSelfRef] = None
-
-
-@dataclass(frozen=True)
-class CompiledTurnContext:
-    transcript: NormalizedMessageList
-    system_prompt: Optional[str]
-    llm_messages: NormalizedMessageList
-    selfref_snapshot: Optional[DataFromSelfRef] = None
-
-
-@dataclass(frozen=True)
-class LLMRequest:
-    messages: NormalizedMessageList
 
 
 def _resolve_system_prompt(
@@ -196,7 +181,6 @@ def build_compiled_messages_from_source(source: CompileSource) -> NormalizedMess
 
 __all__ = [
     "CompiledTurnContext",
-    "LLMRequest",
     "ReducedTurnContext",
     "build_compiled_messages_from_source",
     "compile_invocation_turn",
