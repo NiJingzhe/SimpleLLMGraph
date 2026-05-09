@@ -1,0 +1,135 @@
+---
+title: Configuration
+description: "provider.json, environment variables, and logging setup"
+---
+
+# Configuration
+
+## provider.json
+
+The primary model configuration file. Defines available providers and models:
+
+```json
+{
+  "openrouter": [
+    {
+      "model_name": "openai/gpt-4o",
+      "api_keys": ["sk-key-1", "sk-key-2"],
+      "base_url": "https://openrouter.ai/api/v1",
+      "max_retries": 5,
+      "retry_delay": 1.0,
+      "rate_limit_capacity": 20,
+      "rate_limit_refill_rate": 3.0
+    },
+    {
+      "model_name": "anthropic/claude-3.5-sonnet",
+      "api_keys": ["sk-key-1"],
+      "base_url": "https://openrouter.ai/api/v1",
+      "max_retries": 3,
+      "retry_delay": 2.0,
+      "rate_limit_capacity": 10,
+      "rate_limit_refill_rate": 2.0
+    }
+  ],
+  "local": [
+    {
+      "model_name": "llama-3.1-70b",
+      "api_keys": ["not-needed"],
+      "base_url": "http://localhost:8000/v1",
+      "max_retries": 2,
+      "retry_delay": 0.5,
+      "rate_limit_capacity": 50,
+      "rate_limit_refill_rate": 10.0
+    }
+  ]
+}
+```
+
+### Structure
+
+- **Top level** = provider ID → array of model configs
+- **Lookup** = `providers[provider_id][model_name]`
+- **Multiple keys** = load-balanced across keys in `api_keys`
+
+### Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `model_name` | string | yes | Model identifier for the provider |
+| `api_keys` | string[] | yes | One or more API keys (rotated) |
+| `base_url` | string | yes | API endpoint base URL |
+| `max_retries` | int | no | Retry count on transient failures. Default: 5 |
+| `retry_delay` | float | no | Seconds between retries. Default: 1.0 |
+| `rate_limit_capacity` | int | no | Token bucket capacity. Default: 10 |
+| `rate_limit_refill_rate` | float | no | Tokens per second refill. Default: 1.0 |
+
+### Loading
+
+```python
+from SimpleLLMFunc import OpenAICompatible
+
+models = OpenAICompatible.load_from_json_file("provider.json")
+llm = models["openrouter"]["openai/gpt-4o"]
+```
+
+Or for Responses API:
+
+```python
+from SimpleLLMFunc import OpenAIResponsesCompatible
+
+models = OpenAIResponsesCompatible.load_from_json_file("provider.json")
+llm = models["openrouter"]["openai/gpt-4o"]
+```
+
+### Best Practices
+
+- Keep one `provider.json` per project (version control it minus the keys)
+- Put multiple keys in `api_keys` for hot models (automatic rotation)
+- Tune `rate_limit_capacity` and `rate_limit_refill_rate` per model based on your tier
+- Use `max_retries=2` for local models (fast failure), `max_retries=5` for cloud (transient errors)
+
+## Environment Variables (.env)
+
+The framework reads `.env` for logging and observability:
+
+```bash
+# Logging
+LOG_LEVEL=WARNING          # DEBUG, INFO, WARNING, ERROR, CRITICAL
+LOG_DIR=logs               # Directory for log files
+
+# Langfuse (optional)
+LANGFUSE_PUBLIC_KEY=your_public_key
+LANGFUSE_SECRET_KEY=your_secret_key
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
+LANGFUSE_EXPORT_ALL_SPANS=true
+LANGFUSE_ENABLED=true
+```
+
+### Precedence
+
+Runtime environment → `.env` file → framework defaults
+
+### Recommended Defaults
+
+- `LOG_LEVEL=WARNING` — reduces framework noise during normal use
+- `LOG_DIR=logs` — keeps logs out of your project root
+- Langfuse disabled by default — enable only when you need trace collection
+
+## Direct Construction (No Files)
+
+For scripts and one-offs, skip provider.json entirely:
+
+```python
+from SimpleLLMFunc import APIKeyPool, OpenAICompatible
+
+llm = OpenAICompatible(
+    api_key_pool=APIKeyPool(
+        api_keys=["sk-your-key"],
+        provider_id="openai",
+    ),
+    model_name="gpt-4o",
+    base_url="https://api.openai.com/v1",
+)
+```
+
+This is ideal for shell scripts, demos, and quick experiments.

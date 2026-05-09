@@ -1,0 +1,103 @@
+---
+title: LLM is Function
+description: Why treating LLM calls as typed Python functions changes everything
+---
+
+# LLM is Function
+
+The central insight of SimpleLLMFunc: an LLM call should be indistinguishable from a Python function call.
+
+## The Problem with Existing Approaches
+
+Most LLM frameworks introduce new abstractions between you and the model:
+
+- **Chain frameworks** make you think in terms of linked steps, each passing data to the next through a framework-defined protocol
+- **Graph frameworks** make you define nodes and edges, routing data through a visual DAG
+- **Agent frameworks** hide the LLM behind an "agent" abstraction that manages its own state
+
+All of these put a layer of framework-specific concepts between your intent and the model. You learn the framework's vocabulary instead of expressing your task directly.
+
+## The Function Model
+
+In SimpleLLMFunc, an LLM call IS a function call:
+
+```python
+@llm_function(llm_interface=llm)
+async def extract_entities(text: str) -> list[Entity]:
+    """Extract named entities from the text. Include person, org, and location types."""
+    pass
+```
+
+This is a complete, runnable program. The function:
+- Has a **name** — `extract_entities`
+- Has **typed parameters** — `text: str`
+- Has a **typed return value** — `list[Entity]`
+- Has a **docstring** that describes the behavior — this IS the prompt
+- Is **awaitable** — `await extract_entities("...")`
+- Is **composable** — call it from other functions, pass it around, test it
+
+There is no "chain", no "node", no "agent object". There's a function.
+
+## What You Gain
+
+### Type Safety at the Boundary
+
+The return type annotation is a contract. The framework ensures the LLM output is parsed into your declared type — or raises a clear error. No manual JSON parsing, no "sometimes the model returns a string instead of an object".
+
+```python
+class Analysis(BaseModel):
+    sentiment: Literal["positive", "negative", "neutral"]
+    confidence: float = Field(ge=0.0, le=1.0)
+    reasoning: str
+
+result: Analysis = await analyze(text)  # Type-checked, guaranteed structure
+```
+
+### Composability
+
+Functions compose naturally. Build complex pipelines with plain Python:
+
+```python
+async def full_pipeline(document: str) -> Report:
+    entities = await extract_entities(document)
+    summary = await summarize(document)
+    sentiment = await analyze_sentiment(document)
+    return Report(entities=entities, summary=summary, sentiment=sentiment)
+```
+
+No framework DSL needed. No chain definitions. Just functions calling functions.
+
+### Testability
+
+Mock it like any other function:
+
+```python
+async def test_pipeline():
+    with mock.patch("my_module.extract_entities") as mock_extract:
+        mock_extract.return_value = [Entity(name="Alice", type="person")]
+        result = await full_pipeline("Alice went to Paris.")
+        assert result.entities[0].name == "Alice"
+```
+
+### IDE Support
+
+Your IDE already knows how to work with async functions, type annotations, and docstrings. Autocomplete, jump-to-definition, inline docs — all free.
+
+## The Extension: LLM as Agent
+
+`@llm_chat` extends the function model to multi-turn agents. The agent is still just a function — it takes input, returns output. The difference is that it can use tools and maintain conversation state:
+
+```python
+@llm_chat(llm_interface=llm, toolkit=[search, calculate], stream=True)
+async def research_agent(question: str, history: list | None = None):
+    """Research the question using available tools. Cite your sources."""
+    pass
+```
+
+Same function interface. Same composability. But now the function can reason across multiple steps internally (the ReAct loop), use tools, and stream results.
+
+## The Key Insight
+
+The framework's job is to make the gap between "I want to call an LLM" and "I called a Python function" as close to zero as possible. Everything else — context management, tool execution, type parsing — is implementation detail that you can ignore until you need to customize it.
+
+When you DO need to customize, the [Context Model](/context/overview) gives you full control. But the default is: just write a function.

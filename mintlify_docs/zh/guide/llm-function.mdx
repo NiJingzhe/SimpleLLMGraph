@@ -1,0 +1,182 @@
+---
+title: "@llm_function"
+description: 无状态的类型化 LLM 调用——一个函数，一个结果
+---
+
+# @llm_function
+
+`@llm_function` 将 Python 函数签名转化为完整的 LLM 调用。一个输入，一个类型化输出。没有历史记录、没有工具（或带自动循环的工具）、没有状态管理。
+
+## 基本用法
+
+```python
+from pydantic import BaseModel, Field
+from SimpleLLMFunc import OpenAICompatible, llm_function
+
+models = OpenAICompatible.load_from_json_file("provider.json")
+llm = models["openrouter"]["openai/gpt-4o"]
+
+
+class Translation(BaseModel):
+    text: str = Field(description="The translated text")
+    confidence: float = Field(description="0.0-1.0 translation confidence")
+
+
+@llm_function(llm_interface=llm)
+async def translate(text: str, target_language: str) -> Translation:
+    """
+    Translate the text to the target language.
+    Preserve tone and intent. If uncertain about a phrase, lower confidence.
+    """
+    pass
+
+
+result = await translate("Hello world", "French")
+# Translation(text="Bonjour le monde", confidence=0.95)
+```
+
+## 系统提示词的构建方式
+
+你的文档字符串是起点，但框架会对其进行增强：
+
+1. **你的文档字符串** → 任务策略、质量标准、约束条件
+2. **参数类型** → 自动为模型生成描述
+3. **返回类型的 schema** → 输出格式说明（基于 XML 的结构化提取）
+4. **工具最佳实践** → 挂载工具时会自动添加到提示词前部
+
+你只需要编写模型**应该做什么**，框架负责处理模型**应该输出什么**。
+
+## 返回类型
+
+### Pydantic 模型（推荐用于结构化输出）
+
+```python
+@llm_function(llm_interface=llm)
+async def analyze(review: str) -> ProductReview:
+    """Analyze the product review..."""
+    pass
+```
+
+框架会根据 Pydantic 模型生成 XML schema，并指示模型生成匹配的输出。解析过程是自动的。
+
+### 纯 str（用于自由格式文本）
+
+```python
+@llm_function(llm_interface=llm)
+async def write_poem(topic: str) -> str:
+    """Write a short poem about the topic."""
+    pass
+```
+
+### 列表和嵌套类型
+
+```python
+@llm_function(llm_interface=llm)
+async def extract_entities(text: str) -> list[Entity]:
+    """Extract all named entities."""
+    pass
+```
+
+### 基本类型
+
+```python
+@llm_function(llm_interface=llm)
+async def score(text: str) -> float:
+    """Rate quality from 0.0 to 1.0."""
+    pass
+```
+
+## 模板参数
+
+在运行时向文档字符串注入动态值：
+
+```python
+@llm_function(llm_interface=llm)
+async def answer(question: str, context: str) -> str:
+    """
+    Answer the question using the provided context.
+
+    Domain: {domain}
+    Style: {style}
+    """
+    pass
+
+result = await answer(
+    "What is X?",
+    "X is a framework...",
+    _template_params={"domain": "software engineering", "style": "concise"},
+)
+```
+
+## 搭配工具使用
+
+`@llm_function` 可以通过 ReAct 循环使用工具：
+
+```python
+@llm_function(llm_interface=llm, toolkit=[search_tool], max_tool_calls=5)
+async def research(question: str) -> ResearchReport:
+    """Research the question using search. Cite your sources."""
+    pass
+```
+
+函数仍然返回单个类型化结果，但在内部模型可能会多次调用工具，最终才生成答案。
+
+`max_tool_calls` 限制模型可以进行的工具调用次数。`None` 表示不限制。
+
+## 事件流模式
+
+`@llm_function` 始终返回 `AsyncGenerator[ReactOutput, None]`：
+
+```python
+from SimpleLLMFunc.hooks import is_response_yield, is_event_yield
+
+async for output in translate("hello", "French"):
+    if is_response_yield(output):
+        result = output.response  # 类型化的 Translation 对象
+    elif is_event_yield(output):
+        # LLM 事件、工具事件等
+        pass
+```
+
+如果只需要最终响应，可以简化处理：
+
+```python
+from SimpleLLMFunc.hooks import responses_only
+
+async for response in responses_only(translate("hello", "French")):
+    result = response.response
+```
+
+## AbortSignal
+
+取消正在执行的调用：
+
+```python
+from SimpleLLMFunc.hooks import AbortSignal
+
+signal = AbortSignal()
+
+async def run():
+    async for output in translate("...", "French", _abort_signal=signal):
+        ...
+
+# 从另一个任务中取消：
+signal.abort("timeout")
+```
+
+## 参数参考
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `llm_interface` | `LLM_Interface` | 必填 | 要调用的模型 |
+| `toolkit` | `List[Tool]` | `None` | 模型可以使用的工具 |
+| `max_tool_calls` | `int \| None` | `None` | 强制生成最终答案前的最大工具调用次数 |
+| `system_prompt_template` | `str \| None` | `None` | 覆盖系统提示词模板 |
+| `user_prompt_template` | `str \| None` | `None` | 覆盖用户提示词模板 |
+| `**llm_kwargs` | `Any` | — | 传递给 LLM 的参数（temperature 等） |
+
+调用时的特殊参数（以 `_` 为前缀）：
+- `_template_params: Dict[str, Any]` — 用于文档字符串格式化的模板值
+- `_abort_signal: AbortSignal` — 取消信号
+
+→ [API 参考：装饰器](/zh/api/decorators)

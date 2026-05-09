@@ -1,0 +1,115 @@
+---
+title: Abort
+description: Cancel running LLM calls and tool executions with AbortSignal
+---
+
+# Abort
+
+`AbortSignal` provides cooperative cancellation for running agent invocations. It cleanly terminates LLM streaming and tool execution.
+
+## Basic Usage
+
+```python
+from SimpleLLMFunc.hooks import AbortSignal
+
+signal = AbortSignal()
+
+
+@llm_chat(llm_interface=llm, toolkit=[...], stream=True)
+async def agent(message: str, history: list | None = None):
+    """An agent that can be cancelled."""
+    pass
+
+
+async def run():
+    async for output in agent("do something long", history, _abort_signal=signal):
+        if is_response_yield(output):
+            history = output.messages
+
+
+# From another coroutine or callback:
+signal.abort("user cancelled")
+```
+
+## What Happens on Abort
+
+### During LLM Streaming
+
+1. The streaming connection is terminated
+2. Whatever content was received so far is preserved
+3. An `AssistantTruncatedMutation` is emitted with:
+   - `partial_content` — what was received before abort
+   - `abort_reason` — the reason you provided
+4. The ReAct loop terminates via the finalize path
+
+### During Tool Execution
+
+1. Running tools are cancelled (asyncio task cancellation)
+2. For each cancelled tool, a `ToolCancelledMutation` is emitted with:
+   - `tool_call_id` — which call was cancelled
+   - `tool_name` — the tool that was running
+   - `abort_reason` — your reason
+3. This ensures the transcript stays structurally valid (every tool call has a result)
+
+### The Guarantee
+
+Abort always produces a valid final state. The transcript is never left with dangling tool calls or incomplete messages. The mutations ensure structural consistency.
+
+## Abort in @llm_function
+
+Works the same way:
+
+```python
+@llm_function(llm_interface=llm, toolkit=[research_tool])
+async def research(question: str) -> Report:
+    """Research the question."""
+    pass
+
+signal = AbortSignal()
+
+async for output in research("...", _abort_signal=signal):
+    ...
+```
+
+## TUI Integration
+
+The built-in `@tui` decorator handles abort automatically — `Ctrl+C` triggers the signal:
+
+```python
+from SimpleLLMFunc.utils.tui import tui
+
+@tui
+@llm_chat(llm_interface=llm, toolkit=[...], stream=True)
+async def agent(message: str, history: list | None = None, _abort_signal=None):
+    """My agent."""
+    pass
+```
+
+## Checking Abort State
+
+```python
+signal = AbortSignal()
+
+# Check if aborted
+if signal.is_aborted:
+    print(f"Aborted: {signal.reason}")
+```
+
+## Practical Pattern: Timeout
+
+```python
+import asyncio
+
+signal = AbortSignal()
+
+async def with_timeout():
+    task = asyncio.create_task(consume(agent("...", history, _abort_signal=signal)))
+
+    try:
+        await asyncio.wait_for(task, timeout=60.0)
+    except asyncio.TimeoutError:
+        signal.abort("timeout after 60s")
+        await task  # Let it clean up
+```
+
+→ [API Reference: Events](/api/events)

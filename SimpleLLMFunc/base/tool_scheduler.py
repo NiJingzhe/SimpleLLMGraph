@@ -7,10 +7,11 @@ import json
 import time
 from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, cast
 
-from SimpleLLMFunc.base.tool_call.execution import _execute_single_tool_call
+from SimpleLLMFunc.base.tool_call.execution import execute_single_tool_call_result
 from SimpleLLMFunc.base.tool_call.extraction import parse_tool_call_arguments
 from SimpleLLMFunc.base.types import (
     ContextMutation,
+    MultimodalToolResultMutation,
     ToolCancelledMutation,
     ToolResultMutation,
     ToolSchedulerResult,
@@ -91,7 +92,7 @@ async def schedule_tool_batch(
         )
 
         try:
-            tool_call_dict, messages_to_append, _is_multimodal = await _execute_single_tool_call(
+            execution_result = await execute_single_tool_call_result(
                 tool_call,
                 tool_map,
                 event_emitter=tool_event_emitter,
@@ -99,16 +100,26 @@ async def schedule_tool_batch(
             )
 
             mutations: List[ContextMutation] = []
-            for message in messages_to_append:
-                if message.get("role") == "tool":
-                    mutations.append(
-                        ToolResultMutation(
-                            tool_call_id=str(message.get("tool_call_id", tool_call_id)),
-                            content=str(message.get("content", "")),
-                        )
+            if execution_result.is_multimodal:
+                mutations.append(
+                    MultimodalToolResultMutation(
+                        tool_call_id=execution_result.tool_call_id,
+                        tool_name=execution_result.tool_name,
+                        arguments=arguments_str,
+                        user_messages=execution_result.messages,
                     )
-                else:
-                    mutations.append(UserMessageMutation(message=message))
+                )
+            else:
+                for message in execution_result.messages:
+                    if message.get("role") == "tool":
+                        mutations.append(
+                            ToolResultMutation(
+                                tool_call_id=str(message.get("tool_call_id", tool_call_id)),
+                                content=str(message.get("content", "")),
+                            )
+                        )
+                    else:
+                        mutations.append(UserMessageMutation(message=message))
 
             parsed_arguments_end = parse_tool_call_arguments(arguments_str, allow_closure=True)
             result_payload: ToolResult = ""

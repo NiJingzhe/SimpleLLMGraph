@@ -1,0 +1,136 @@
+---
+title: Multi-Turn Chat
+description: Build a streaming multi-turn chat with history management
+---
+
+# Multi-Turn Chat
+
+This guide shows how to build a stateful conversation with streaming output, history management, and proper turn lifecycle.
+
+## The History Pattern
+
+SimpleLLMFunc agents are **stateless by default** — they don't store conversation history internally. You pass history in, you get updated history back. This makes state management explicit and testable.
+
+```python
+import asyncio
+from SimpleLLMFunc import OpenAICompatible, llm_chat
+from SimpleLLMFunc.hooks import is_response_yield, is_event_yield
+
+models = OpenAICompatible.load_from_json_file("provider.json")
+llm = models["openrouter"]["openai/gpt-4o"]
+
+
+@llm_chat(llm_interface=llm, stream=True)
+async def chat(message: str, history: list | None = None):
+    """
+    You are a concise, helpful assistant.
+    Remember context from earlier in the conversation.
+    """
+    pass
+```
+
+The parameter named `history` (or `chat_history`) is special — the framework uses it to carry conversation state between turns.
+
+## Streaming Responses
+
+```python
+async def main():
+    history = []
+
+    # Turn 1
+    print("User: What is Python?")
+    print("Assistant: ", end="")
+    async for output in chat("What is Python?", history):
+        if is_response_yield(output):
+            print(output.response, end="")
+            history = output.messages
+    print("\n")
+
+    # Turn 2 — the agent remembers turn 1
+    print("User: What are its main features?")
+    print("Assistant: ", end="")
+    async for output in chat("What are its main features?", history):
+        if is_response_yield(output):
+            print(output.response, end="")
+            history = output.messages
+    print()
+
+
+asyncio.run(main())
+```
+
+Each `output.messages` contains the full updated conversation. Pass it back for the next turn.
+
+## Event-Aware Consumption
+
+For richer UX, handle individual events:
+
+```python
+from SimpleLLMFunc.hooks import (
+    LLMChunkArriveEvent,
+    ToolCallStartEvent,
+    ToolCallEndEvent,
+    ReactEndEvent,
+)
+
+
+async def run_turn(message: str, history: list) -> list:
+    async for output in chat(message, history):
+        if is_event_yield(output):
+            event = output.event
+            if isinstance(event, LLMChunkArriveEvent):
+                print(event.chunk, end="", flush=True)
+            elif isinstance(event, ToolCallStartEvent):
+                print(f"\n[calling {event.tool_name}...]")
+            elif isinstance(event, ToolCallEndEvent):
+                print(f"[done: {event.tool_name}]")
+            elif isinstance(event, ReactEndEvent):
+                return event.final_messages
+    return history
+```
+
+## Non-Streaming Mode
+
+For simpler use cases where you just want the final response:
+
+```python
+from SimpleLLMFunc.hooks import responses_only
+
+
+@llm_chat(llm_interface=llm, stream=False)
+async def simple_chat(message: str, history: list | None = None):
+    """A helpful assistant."""
+    pass
+
+
+async def main():
+    history = []
+    async for output in simple_chat("Hello!", history):
+        if is_response_yield(output):
+            print(output.response)
+            history = output.messages
+
+
+asyncio.run(main())
+```
+
+## Why History is External
+
+This is a deliberate design choice:
+- **Testable** — You can snapshot and replay any conversation state
+- **Flexible storage** — Store in memory, Redis, disk, database — your choice
+- **Fork-friendly** — Branch a conversation by copying the history list
+- **No hidden state** — The agent has no memory you don't control
+
+For agents that need **durable, self-modifying context** (experiences, compaction, forking), see [SelfRef](/context/selfref).
+
+## What's Next
+
+<CardGroup cols={2}>
+  <Card title="Design Philosophy" icon="lightbulb" href="/philosophy/llm-is-function">
+    Understand why the framework is designed this way.
+  </Card>
+  <Card title="Context Model" icon="database" href="/context/overview">
+    Learn how context is structured, mutated, and compiled.
+  </Card>
+</CardGroup>

@@ -1,0 +1,172 @@
+---
+title: Event Stream
+description: "ReactOutput, event types, and patterns for consuming the agent event stream"
+---
+
+# Event Stream
+
+Every `@llm_function` and `@llm_chat` call returns an `AsyncGenerator[ReactOutput, None]`. Each yielded item is either a **response** (final output) or an **event** (lifecycle signal).
+
+## ReactOutput
+
+```python
+ReactOutput = ResponseYield | EventYield
+```
+
+Use type guards to distinguish:
+
+```python
+from SimpleLLMFunc.hooks import is_response_yield, is_event_yield
+
+async for output in agent("hello", history):
+    if is_response_yield(output):
+        # Final response — text or typed result
+        print(output.response)
+        history = output.messages
+    elif is_event_yield(output):
+        # Lifecycle event
+        handle_event(output.event)
+```
+
+## ResponseYield
+
+Contains the final agent output:
+
+```python
+@dataclass
+class ResponseYield:
+    response: Any              # The result (str, Pydantic model, raw dict)
+    messages: NormalizedMessageList  # Updated conversation history
+```
+
+## EventYield
+
+Contains a lifecycle event:
+
+```python
+@dataclass
+class EventYield:
+    event: ReActEvent          # One of 14 event types
+    origin: EventOrigin        # Source identification (main agent or fork)
+```
+
+## The 14 Event Types
+
+### Loop Lifecycle
+
+| Event | When | Key Fields |
+|-------|------|-----------|
+| `ReactStartEvent` | ReAct loop begins | — |
+| `ReactIterationStartEvent` | New iteration starts | `iteration` |
+| `ReactIterationEndEvent` | Iteration completes | `iteration` |
+| `ReactEndEvent` | Loop terminates | `final_messages`, `response` |
+
+### LLM Call
+
+| Event | When | Key Fields |
+|-------|------|-----------|
+| `LLMCallStartEvent` | Before calling the provider | `messages` (what the LLM sees) |
+| `LLMChunkArriveEvent` | Each streaming chunk | `chunk` (text delta) |
+| `LLMCallEndEvent` | LLM response complete | `usage`, `response_message` |
+| `LLMCallErrorEvent` | LLM call failed | `error` |
+
+### Tool Execution
+
+| Event | When | Key Fields |
+|-------|------|-----------|
+| `ToolCallsBatchStartEvent` | Tool batch begins | `tool_calls` |
+| `ToolCallStartEvent` | Single tool starts | `tool_name`, `tool_call_id`, `arguments` |
+| `ToolCallArgumentsDeltaEvent` | Streaming tool args | `delta` |
+| `ToolCallEndEvent` | Tool completes | `tool_name`, `result`, `duration_ms` |
+| `ToolCallErrorEvent` | Tool failed | `tool_name`, `error` |
+| `ToolCallsBatchEndEvent` | All tools in batch done | — |
+
+### Custom Events
+
+| Event | When | Key Fields |
+|-------|------|-----------|
+| `CustomEvent` | Tool emits custom data | `event_name`, `data`, `tool_call_id` |
+
+Custom events are emitted by tools via `ToolEventEmitter` — used for streaming tool output (e.g., PyRepl stdout, shell output).
+
+## Convenience Filters
+
+```python
+from SimpleLLMFunc.hooks import responses_only, events_only, filter_events
+
+# Only final responses
+async for resp in responses_only(agent("hello", history)):
+    print(resp.response)
+
+# Only events
+async for evt in events_only(agent("hello", history)):
+    handle(evt.event)
+
+# Only specific event types
+from SimpleLLMFunc.hooks import LLMChunkArriveEvent
+
+async for evt in filter_events(agent("hello", history), LLMChunkArriveEvent):
+    print(evt.event.chunk, end="")
+```
+
+## EventOrigin (Fork Routing)
+
+When using SelfRef forks, events come from multiple agents. `EventOrigin` identifies the source:
+
+```python
+@dataclass
+class EventOrigin:
+    agent_id: str        # "main" or fork ID
+    fork_id: Optional[str]
+    parent_tool_call_id: Optional[str]
+```
+
+Use this to route events to different UI panels (e.g., main agent vs. child agents).
+
+## Common Patterns
+
+### Streaming Text to Terminal
+
+```python
+async for output in agent("hello", history):
+    if is_event_yield(output):
+        if isinstance(output.event, LLMChunkArriveEvent):
+            print(output.event.chunk, end="", flush=True)
+    elif is_response_yield(output):
+        print()  # newline
+        history = output.messages
+```
+
+### Progress Tracking
+
+```python
+async for output in agent("do complex task", history):
+    if is_event_yield(output):
+        event = output.event
+        if isinstance(event, ToolCallStartEvent):
+            print(f"  → calling {event.tool_name}...")
+        elif isinstance(event, ToolCallEndEvent):
+            print(f"  ✓ {event.tool_name} ({event.duration_ms}ms)")
+        elif isinstance(event, ReactIterationStartEvent):
+            print(f"[iteration {event.iteration}]")
+```
+
+### Event Observer Decorator
+
+For cross-cutting event handling without modifying consumption logic:
+
+```python
+from SimpleLLMFunc.hooks import with_event_observer
+
+def log_events(event: ReActEvent, origin: EventOrigin):
+    if isinstance(event, LLMCallEndEvent):
+        print(f"Tokens: {event.usage}")
+
+@with_event_observer(log_events)
+@llm_chat(llm_interface=llm, toolkit=[...])
+async def agent(message: str, history: list | None = None):
+    """My agent."""
+    pass
+```
+
+→ [API Reference: Events](/api/events)

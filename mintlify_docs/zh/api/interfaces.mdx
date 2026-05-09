@@ -1,0 +1,189 @@
+---
+title: 接口
+description: "LLM_Interface、OpenAICompatible、OpenAIResponsesCompatible、APIKeyPool 的 API 参考"
+---
+
+# 接口 API 参考
+
+## LLM_Interface (ABC)
+
+```python
+from SimpleLLMFunc.interface import LLM_Interface
+```
+
+所有模型接口的抽象基类（Abstract Base Class）。
+
+### 构造函数
+
+```python
+LLM_Interface(
+    api_key_pool: APIKeyPool,
+    model_name: str,
+    base_url: Optional[str] = None,
+    context_window: int = 200_000,
+)
+```
+
+### 抽象方法
+
+| 方法 | 签名 | 描述 |
+|------|------|------|
+| `chat` | `async def chat(*, trace_id, stream=False, messages, timeout=None, **kwargs)` | 非流式调用 |
+| `chat_stream` | `async def chat_stream(*, trace_id, stream=True, messages, timeout=None, **kwargs) -> AsyncGenerator` | 流式调用 |
+
+### 属性
+
+| 属性 | 类型 | 描述 |
+|------|------|------|
+| `model_name` | `str` | 模型标识符 |
+| `base_url` | `str \| None` | API 端点 |
+| `context_window` | `int` | 上下文窗口大小（以 token 为单位） |
+| `api_key_pool` | `APIKeyPool` | API 密钥轮换池 |
+
+---
+
+## OpenAICompatible
+
+```python
+from SimpleLLMFunc import OpenAICompatible
+```
+
+适配 OpenAI Chat Completions API 及其兼容端点。
+
+### 构造函数
+
+```python
+OpenAICompatible(
+    api_key_pool: APIKeyPool,
+    model_name: str,
+    base_url: str,
+    max_retries: int = 5,
+    retry_delay: float = 1.0,
+    rate_limit_capacity: int = 10,
+    rate_limit_refill_rate: float = 1.0,
+    context_window: int = 200_000,
+)
+```
+
+### 类方法
+
+| 方法 | 返回值 | 描述 |
+|------|--------|------|
+| `load_from_json_file(path)` | `Dict[str, Dict[str, OpenAICompatible]]` | 从 provider.json 加载所有模型 |
+
+### 实例方法
+
+| 方法 | 返回值 | 描述 |
+|------|--------|------|
+| `get_rate_limit_status()` | `Dict[str, Any]` | 当前速率限制器状态 |
+| `reset_rate_limit()` | `None` | 重置令牌桶 |
+
+### 示例
+
+```python
+from SimpleLLMFunc import OpenAICompatible, APIKeyPool
+
+# From file
+models = OpenAICompatible.load_from_json_file("provider.json")
+llm = models["openrouter"]["openai/gpt-4o"]
+
+# Direct
+llm = OpenAICompatible(
+    api_key_pool=APIKeyPool(api_keys=["sk-..."], provider_id="openai"),
+    model_name="gpt-4o",
+    base_url="https://api.openai.com/v1",
+    rate_limit_capacity=20,
+    rate_limit_refill_rate=5.0,
+)
+```
+
+---
+
+## OpenAIResponsesCompatible
+
+```python
+from SimpleLLMFunc import OpenAIResponsesCompatible
+```
+
+适配 OpenAI Responses API。构造函数和加载模式与 `OpenAICompatible` 相同。
+
+### 与 OpenAICompatible 的区别
+
+| 方面 | OpenAICompatible | OpenAIResponsesCompatible |
+|------|-----------------|--------------------------|
+| 系统提示词 | `messages[0].role="system"` | `instructions` 字段 |
+| 流式格式 | Chat Completion 数据块 | Responses 流事件 |
+| 推理支持 | 不适用 | `reasoning={...}` kwargs |
+| 传输协议 | Chat Completions API | Responses API |
+
+### 示例
+
+```python
+from SimpleLLMFunc import OpenAIResponsesCompatible, APIKeyPool
+
+llm = OpenAIResponsesCompatible(
+    api_key_pool=APIKeyPool(api_keys=["sk-..."], provider_id="openai"),
+    model_name="gpt-4o",
+    base_url="https://api.openai.com/v1",
+)
+
+@llm_chat(llm_interface=llm, reasoning_effort="high")
+async def reasoning_agent(message: str, history: list | None = None):
+    """Reason carefully about the question."""
+    pass
+```
+
+---
+
+## APIKeyPool
+
+```python
+from SimpleLLMFunc import APIKeyPool
+```
+
+轮询式密钥轮换（round-robin key rotation），用于负载分发。
+
+### 构造函数
+
+```python
+APIKeyPool(
+    api_keys: List[str],
+    provider_id: str,
+)
+```
+
+### 示例
+
+```python
+pool = APIKeyPool(
+    api_keys=["sk-key-1", "sk-key-2", "sk-key-3"],
+    provider_id="openrouter-gpt4o",
+)
+# Keys are rotated on each call automatically
+```
+
+---
+
+## TokenBucket
+
+```python
+from SimpleLLMFunc import TokenBucket
+```
+
+令牌桶速率限制器（Token Bucket Rate Limiter）。
+
+### 构造函数
+
+```python
+TokenBucket(
+    capacity: int,
+    refill_rate: float,
+)
+```
+
+| 参数 | 描述 |
+|------|------|
+| `capacity` | 桶中最大令牌数 |
+| `refill_rate` | 每秒补充的令牌数 |
+
+由 `OpenAICompatible` 内部使用。暴露给外部以便自定义实现。

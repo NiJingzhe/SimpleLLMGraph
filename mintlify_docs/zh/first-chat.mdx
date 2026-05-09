@@ -1,0 +1,136 @@
+---
+title: 多轮对话
+description: 构建支持流式输出和历史管理的多轮对话
+---
+
+# 多轮对话
+
+本指南展示如何构建具有流式输出、历史管理和完整轮次生命周期的有状态对话。
+
+## History 模式
+
+SimpleLLMFunc 的 Agent **默认无状态**——它们不在内部存储对话历史。你传入历史，你拿回更新后的历史。这使得状态管理显式且可测试。
+
+```python
+import asyncio
+from SimpleLLMFunc import OpenAICompatible, llm_chat
+from SimpleLLMFunc.hooks import is_response_yield, is_event_yield
+
+models = OpenAICompatible.load_from_json_file("provider.json")
+llm = models["openrouter"]["openai/gpt-4o"]
+
+
+@llm_chat(llm_interface=llm, stream=True)
+async def chat(message: str, history: list | None = None):
+    """
+    你是一个简洁、有帮助的助手。
+    记住对话中之前的上下文。
+    """
+    pass
+```
+
+名为 `history`（或 `chat_history`）的参数是特殊的——框架用它在轮次之间传递对话状态。
+
+## 流式响应
+
+```python
+async def main():
+    history = []
+
+    # 第 1 轮
+    print("用户: Python 是什么？")
+    print("助手: ", end="")
+    async for output in chat("Python 是什么？", history):
+        if is_response_yield(output):
+            print(output.response, end="")
+            history = output.messages
+    print("\n")
+
+    # 第 2 轮——Agent 记得第 1 轮的内容
+    print("用户: 它的主要特性是什么？")
+    print("助手: ", end="")
+    async for output in chat("它的主要特性是什么？", history):
+        if is_response_yield(output):
+            print(output.response, end="")
+            history = output.messages
+    print()
+
+
+asyncio.run(main())
+```
+
+每个 `output.messages` 包含完整的更新后对话。将它传回下一轮即可。
+
+## 事件感知消费
+
+更丰富的 UX，处理单个事件：
+
+```python
+from SimpleLLMFunc.hooks import (
+    LLMChunkArriveEvent,
+    ToolCallStartEvent,
+    ToolCallEndEvent,
+    ReactEndEvent,
+)
+
+
+async def run_turn(message: str, history: list) -> list:
+    async for output in chat(message, history):
+        if is_event_yield(output):
+            event = output.event
+            if isinstance(event, LLMChunkArriveEvent):
+                print(event.chunk, end="", flush=True)
+            elif isinstance(event, ToolCallStartEvent):
+                print(f"\n[调用 {event.tool_name}...]")
+            elif isinstance(event, ToolCallEndEvent):
+                print(f"[完成: {event.tool_name}]")
+            elif isinstance(event, ReactEndEvent):
+                return event.final_messages
+    return history
+```
+
+## 非流式模式
+
+更简单的场景，只需要最终响应：
+
+```python
+from SimpleLLMFunc.hooks import responses_only
+
+
+@llm_chat(llm_interface=llm, stream=False)
+async def simple_chat(message: str, history: list | None = None):
+    """一个有帮助的助手。"""
+    pass
+
+
+async def main():
+    history = []
+    async for output in simple_chat("你好!", history):
+        if is_response_yield(output):
+            print(output.response)
+            history = output.messages
+
+
+asyncio.run(main())
+```
+
+## 为什么历史是外部的
+
+这是刻意的设计选择：
+- **可测试** — 你可以快照和重放任何对话状态
+- **灵活存储** — 存在内存、Redis、磁盘、数据库——你的选择
+- **可分叉** — 通过复制历史列表来分支对话
+- **无隐藏状态** — Agent 没有你不控制的记忆
+
+对于需要**持久、可自我修改上下文**（经验、压缩、分叉）的 Agent，参见 [SelfRef](/zh/context/selfref)。
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="设计哲学" icon="lightbulb" href="/zh/philosophy/llm-is-function">
+    理解框架为什么这样设计。
+  </Card>
+  <Card title="上下文模型" icon="database" href="/zh/context/overview">
+    了解上下文如何被结构化、变更和编译。
+  </Card>
+</CardGroup>

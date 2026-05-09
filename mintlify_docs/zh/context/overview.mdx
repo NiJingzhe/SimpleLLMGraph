@@ -1,0 +1,146 @@
+---
+title: 上下文概览
+description: "核心思维模型：SimpleLLMFunc 中的上下文是什么，数据如何在系统中流转"
+---
+
+# 上下文概览
+
+本页介绍 SimpleLLMFunc 如何组织、管理和变换上下文——即 LLM 在每个推理步骤中所看到的信息。
+
+## 核心数据结构
+
+### ContextState
+
+对话当前状态的运行时表示：
+
+```python
+@dataclass
+class ContextState:
+    messages: NormalizedMessageList           # The conversation transcript
+    data_from_selfref: Optional[DataFromSelfRef]  # Durable self-reference state
+    pending_mutations: List[ContextMutation]  # Changes waiting to be applied
+```
+
+- `messages` 是实时对话记录——包含助手消息、工具结果、用户消息
+- `data_from_selfref` 承载来自 SelfReference 后端的持久状态（经验、摘要）
+- `pending_mutations` 在 ReAct 迭代期间积累变更，在下一个编译边界统一应用
+
+### CompileSource
+
+输入边界——生成 LLM 请求所需的全部信息：
+
+```python
+@dataclass(frozen=True)
+class CompileSource:
+    data_from_agent_config: DataFromAgentConfig  # Static: system prompt, tool specs
+    data_from_selfref: Optional[DataFromSelfRef] # Durable: experiences, summaries
+    input_messages: NormalizedMessageList         # Dynamic: conversation messages
+```
+
+### DataFromAgentConfig
+
+来自装饰器的静态配置：
+
+```python
+@dataclass(frozen=True)
+class DataFromAgentConfig:
+    base_system_prompt: str                    # From docstring (possibly templated)
+    template_params: Optional[Dict[str, Any]]  # Runtime template values
+    tool_prompt_specs: List[Dict[str, Any]]    # Tool best-practice injections
+    include_must_principles: bool              # Whether to add structured-call rules
+```
+
+### DataFromSelfRef
+
+来自 SelfReference 后端的持久状态：
+
+```python
+@dataclass(frozen=True)
+class DataFromSelfRef:
+    base_system_prompt: str                    # System prompt with selfref markers
+    experiences: List[Dict[str, str]]          # Durable remembered experiences
+    summary: Optional[Dict[str, Any]]          # Compaction summary metadata
+    summary_message: Optional[Dict[str, Any]]  # The summary as a message
+    working_messages: NormalizedMessageList     # Post-compaction working transcript
+```
+
+## 数据流：从你的代码到 LLM
+
+```
+┌─ 你的代码 ────────────────────────────────────────────────┐
+│                                                           │
+│  @llm_chat(llm_interface=llm, toolkit=[...])             │
+│  async def agent(message: str, history: list):            │
+│      """System prompt here."""                            │
+│      pass                                                 │
+│                                                           │
+│  async for output in agent("hello", history):             │
+│      ...                                                  │
+│                                                           │
+└───────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─ 装饰器层 ──────────────────────────────────────────────┐
+│                                                           │
+│  构建 InvocationSpec：                                    │
+│    - 解析 docstring → base_system_prompt                  │
+│    - 收集工具规格 → tool_prompt_specs                      │
+│    - 解析 template_params                                 │
+│    - 根据 history + 用户消息构建初始对话记录                  │
+│                                                           │
+└───────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─ ReAct 循环 ─────────────────────────────────────────────┐
+│                                                           │
+│  while has_more_work:                                     │
+│                                                           │
+│    1. 收集 hook mutation（selfref 等）                     │
+│    2. compile_context(state, pending_mutations)           │
+│         → apply_mutations → CompiledContext               │
+│    3. compile_invocation_turn(spec, messages, [], selfref)│
+│         → reduce + convert → CompiledTurnContext          │
+│    4. execute_single_llm_phase(compiled.llm_messages)     │
+│         → 产出事件 + 生成 mutation                         │
+│    5. 如有工具调用：schedule_tool_batch(...)                │
+│         → 执行工具 → 生成 mutation                         │
+│    6. 合并所有 mutation → 回到步骤 1                       │
+│                                                           │
+└───────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─ 接口层 ─────────────────────────────────────────────────┐
+│                                                           │
+│  OpenAICompatible.chat_stream(messages=[...])             │
+│  → 向提供商发送 HTTP 请求                                  │
+│  → 流式返回响应                                           │
+│                                                           │
+└───────────────────────────────────────────────────────────┘
+```
+
+## 关键不变量
+
+1. **Mutation 是唯一的写入路径** — 没有任何组件直接修改 `ContextState.messages`。所有变更都产生 `ContextMutation` 对象。
+
+2. **Mutation 先积累，再原子化应用** — 在一次 ReAct 迭代中，mutation 积累在 `pending_mutations` 中，在编译边界统一应用。
+
+3. **编译产生快照** — 编译输出是一份克隆。原始状态永远不会被原地修改。
+
+4. **SelfRef 状态持续传播** — `DataFromSelfRef` 在编译过程中向前传递。如果 mutation 应用后的对话记录中检测到 selfref 标记，快照会被刷新。
+
+5. **系统提示词的解析优先级**：
+   - SelfRef 快照（如果存在）→ 渲染基础提示词 + 经验
+   - PromptContract.system_prompt（如果显式设置）
+   - 对话记录中最新的系统消息
+   - PromptContract.base_instruction（docstring 兜底）
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="Mutation 类型" icon="arrows-rotate" href="/zh/context/mutations">
+    10 种 mutation 类型——触发时机与产出内容。
+  </Card>
+  <Card title="编译管道" icon="microchip" href="/zh/context/compile-pipeline">
+    mutation 如何变成最终的 LLM 请求。
+  </Card>
+</CardGroup>

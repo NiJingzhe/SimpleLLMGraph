@@ -20,6 +20,14 @@ class ToolResultMutation:
 
 
 @dataclass
+class MultimodalToolResultMutation:
+    tool_call_id: str
+    tool_name: str
+    arguments: str
+    user_messages: List[Dict[str, Any]]
+
+
+@dataclass
 class UserMessageMutation:
     message: Dict[str, Any]
 
@@ -61,6 +69,7 @@ class ToolCancelledMutation:
 ContextMutation = Union[
     AssistantMessageMutation,
     ToolResultMutation,
+    MultimodalToolResultMutation,
     UserMessageMutation,
     ContextReplaceMutation,
     ContextSummaryMutation,
@@ -79,6 +88,7 @@ __all__ = [
     "ContextSummaryMutation",
     "ExperienceRememberMutation",
     "ExperienceForgetMutation",
+    "MultimodalToolResultMutation",
     "ToolCancelledMutation",
     "ToolResultMutation",
     "UserMessageMutation",

@@ -1,0 +1,81 @@
+---
+title: 示例
+description: SimpleLLMFunc 仓库中分类的可运行示例
+---
+
+# 示例
+
+所有示例都在 [`examples/`](https://github.com/NiJingzhe/SimpleLLMFunc/tree/master/examples) 目录中。每个示例都是独立且可运行的。
+
+## 快速入门
+
+| 示例 | 展示内容 |
+|---------|--------------|
+| `basic_usage.py` | 最简 `@llm_function` 调用及类型化输出 |
+| `template_params_example.py` | 使用 `_template_params` 的动态文档字符串模板 |
+
+## 工具使用
+
+| 示例 | 展示内容 |
+|---------|--------------|
+| `tool_usage_example.py` | `@tool` 装饰器、多工具 Agent |
+| `multimodal_tool_example.py` | 返回 `ImgPath`/`ImgUrl` 的工具 |
+| `agent_as_tool_example.py` | 将一个 Agent 嵌套为另一个 Agent 的工具 |
+
+## 聊天与流式输出
+
+| 示例 | 展示内容 |
+|---------|--------------|
+| `streaming_example.py` | 使用 `LLMChunkArriveEvent` 消费实时流式输出 |
+| `event_stream_example.py` | 完整的事件流消费模式 |
+| `abort_example.py` | 使用 `AbortSignal` 进行取消操作 |
+
+## PyRepl 与运行时
+
+| 示例 | 展示内容 |
+|---------|--------------|
+| `pyrepl_example.py` | 持久化 REPL：变量、流式输出、重置 |
+| `selfref_example.py` | `runtime.selfref.context.*` 原语 |
+
+## 完整 Agent
+
+| 示例 | 展示内容 |
+|---------|--------------|
+| `tui_general_agent_example.py` | 完整的编程 Agent，包含 TUI、PyRepl、FileToolset、SelfRef、分叉（fork）与压缩（compaction） |
+
+这是构建生产级 Agent 的参考实现。架构详解请参阅 [Harness 模式](/advanced/harness-patterns)。
+
+## 运行示例
+
+```bash
+# 克隆仓库
+git clone https://github.com/NiJingzhe/SimpleLLMFunc.git
+cd SimpleLLMFunc
+
+# 安装依赖
+poetry install
+
+# 复制并配置 provider.json
+cp examples/provider_template.json examples/provider.json
+# 编辑 examples/provider.json，填入你的 API 密钥
+
+# 运行任意示例
+poetry run python examples/basic_usage.py
+poetry run python examples/tui_general_agent_example.py
+```
+
+## 构建你自己的应用
+
+从以下模式之一开始：
+
+<CardGroup cols={3}>
+  <Card title="单次调用函数" icon="bolt" href="/quickstart">
+    `@llm_function` — 类型化输入/输出，无状态
+  </Card>
+  <Card title="聊天 Agent" icon="comments" href="/first-agent">
+    `@llm_chat` + 工具 — 多轮对话与 ReAct 循环
+  </Card>
+  <Card title="完整 Agent" icon="robot" href="/advanced/harness-patterns">
+    PyRepl + SelfRef + FileToolset + TUI — 生产级
+  </Card>
+</CardGroup>

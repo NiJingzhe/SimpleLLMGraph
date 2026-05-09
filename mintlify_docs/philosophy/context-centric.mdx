@@ -1,0 +1,116 @@
+---
+title: Context-Centric
+description: Why context is the single source of truth and all changes flow through mutations
+---
+
+# Context-Centric
+
+The most important architectural decision in SimpleLLMFunc: **context is a structured state machine, not a chat log**.
+
+## The Problem
+
+In most LLM agent systems, "context" means "the list of messages we send to the model." This list gets mutated from everywhere:
+- Tools append results directly
+- The orchestration loop pushes assistant messages in
+- Memory systems inject context at arbitrary points
+- Summarization overwrites history in place
+
+The result: unpredictable context. You can't reason about what the model will see because multiple components write to the same mutable list with no coordination.
+
+## The Mutation Model
+
+In SimpleLLMFunc, nothing writes to context directly. Instead:
+
+1. **Producers** (LLM calls, tool executions, selfref hooks) emit **mutations** — typed objects that describe what should change
+2. **Mutations accumulate** during a ReAct iteration
+3. At the **compile boundary**, all pending mutations are applied atomically to produce the next context state
+4. Only the **compiled result** becomes visible to the LLM
+
+```
+Producer → Mutation → [accumulate] → Compile → LLM sees result
+```
+
+This is the same principle as database transactions or React's state batching: gather all changes, apply them together, produce a consistent snapshot.
+
+## The 10 Mutation Types
+
+Every possible context change maps to exactly one of these:
+
+| Mutation | What It Does |
+|----------|-------------|
+| `AssistantMessage` | Append the model's response (text or tool calls) |
+| `ToolResult` | Attach a tool's output to its corresponding call |
+| `MultimodalToolResult` | Tool returned images/mixed content |
+| `UserMessage` | Append a new user message |
+| `ContextReplace` | Replace the entire message list (hard reset) |
+| `ContextSummary` | Replace with a summary + remembered experiences |
+| `ExperienceRemember` | Store a durable experience in system context |
+| `ExperienceForget` | Remove a stored experience |
+| `AssistantTruncated` | Record an aborted/truncated model response |
+| `ToolCancelled` | Record a cancelled tool call |
+
+There are no other ways to change context. If you understand these 10 types, you understand every possible context transition in the system.
+
+## Why This Matters
+
+### Predictability
+
+At any point, you can answer: "What will the model see?" by looking at the current context state + pending mutations. No hidden side effects, no race conditions between concurrent tools.
+
+### Auditability
+
+Every change has a typed origin. You can log mutations to see exactly what happened:
+```
+[iter 1] AssistantMessage: "Let me search for that..."
+[iter 1] ToolResult(id=call_abc): "Found: SimpleLLMFunc is..."
+[iter 2] AssistantMessage: "Based on the search results..."
+```
+
+### Safe Concurrency
+
+When multiple tools execute in parallel, each produces its own mutations. They're collected and applied in order at the compile boundary — no locks, no race conditions on shared message lists.
+
+### Controlled Compaction
+
+Context compression (summarization) is just another mutation (`ContextSummary`). It goes through the same pipeline, respects the same ordering rules, and produces a deterministic result.
+
+## The Compile Boundary
+
+The compile boundary is where mutations become messages:
+
+```
+┌─────────────────────────────────────────────┐
+│  ReAct Iteration N                           │
+│                                              │
+│  LLM call → AssistantMessage mutation        │
+│  Tool exec → ToolResult mutations            │
+│  SelfRef hook → Experience mutations         │
+│                                              │
+├──────────── COMPILE BOUNDARY ────────────────┤
+│                                              │
+│  apply_mutations(state, pending_mutations)   │
+│  → produces new ContextState                 │
+│                                              │
+│  convert_to_llm_request(context)             │
+│  → produces messages[] for the provider      │
+│                                              │
+└─────────────────────────────────────────────┘
+```
+
+See [Compile Pipeline](/context/compile-pipeline) for the full technical walkthrough.
+
+## The Practical Implication
+
+For most users, this is invisible — you write a function, it works. The mutation model is the implementation detail that makes it work reliably.
+
+But when you need to:
+- Understand why the agent "forgot" something → check which mutation replaced context
+- Build a custom memory system → emit the right mutations
+- Debug unexpected behavior → trace the mutation log
+- Implement context compression → use `ContextSummary` mutation via selfref
+
+...the mutation model gives you a complete, typed vocabulary for every possible context change.
+
+<Card title="Deep dive: All 10 Mutations" icon="list" href="/context/mutations">
+  See each mutation type, when it fires, and what it produces.
+</Card>

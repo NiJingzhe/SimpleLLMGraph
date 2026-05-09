@@ -1,8 +1,8 @@
 """Tool call extraction and execution helpers."""
 
 from SimpleLLMFunc.base.tool_call.execution import (
-    _execute_single_tool_call,
-    process_tool_calls,
+    ExecutedToolCallResult,
+    execute_single_tool_call_result,
 )
 from SimpleLLMFunc.base.tool_call.extraction import (
     AccumulatedToolCall,
@@ -32,8 +32,8 @@ from SimpleLLMFunc.base.tool_call.validation import (
 __all__ = [
     "serialize_tool_output_for_langfuse",
     "is_valid_tool_result",
-    "_execute_single_tool_call",
-    "process_tool_calls",
+    "ExecutedToolCallResult",
+    "execute_single_tool_call_result",
     "extract_tool_calls",
     "accumulate_tool_calls_from_chunks",
     "parse_tool_call_arguments",

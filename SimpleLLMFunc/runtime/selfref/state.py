@@ -31,10 +31,7 @@ from SimpleLLMFunc.runtime.selfref.context_ops import (
     normalize_experience_text as _context_ops_normalize_experience_text,
     parse_data_from_selfref as _context_ops_parse_data_from_selfref,
     parse_context_messages as _context_ops_parse_context_messages,
-    remove_framework_injected_prompt_blocks as _context_ops_remove_framework_injected_prompt_blocks,
     render_context_compaction_summary,
-    render_system_prompt_with_experiences as _context_ops_render_system_prompt_with_experiences,
-    split_system_prompt_experiences as _context_ops_split_system_prompt_experiences,
 )
 
 MemoryHistory = List[Dict[str, Any]]
@@ -81,15 +78,6 @@ def _canonicalize_context_messages(messages: MemoryHistory) -> MemoryHistory:
     return _context_ops_canonicalize_context_messages(messages)
 
 
-def _render_system_prompt_with_experiences(
-    base_prompt: str,
-    experiences: List[Dict[str, str]],
-) -> str:
-    return _context_ops_render_system_prompt_with_experiences(
-        base_prompt,
-        experiences,
-    )
-
 
 def _normalize_experience_text(text: str) -> str:
     return _context_ops_normalize_experience_text(text)
@@ -98,15 +86,6 @@ def _normalize_experience_text(text: str) -> str:
 def _normalize_context_summary_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     return _context_ops_normalize_context_summary_payload(payload)
 
-
-def _remove_framework_injected_prompt_blocks(system_prompt: str) -> str:
-    return _context_ops_remove_framework_injected_prompt_blocks(system_prompt)
-
-
-def _split_system_prompt_experiences(
-    system_prompt: str,
-) -> tuple[str, List[Dict[str, str]]]:
-    return _context_ops_split_system_prompt_experiences(system_prompt)
 
 
 def _strip_terminal_pending_tool_calls_message(
@@ -243,46 +222,6 @@ def _normalize_fork_ids(value: Optional[Any]) -> Optional[List[str]]:
         raise ValueError("fork_ids must contain fork_id strings or dicts with fork_id")
 
     return normalized
-
-
-def _extract_text_from_model_like_response(response: Any) -> str:
-    if isinstance(response, str):
-        return response
-
-    if isinstance(response, dict):
-        content = response.get("content")
-        if isinstance(content, str):
-            return content
-
-    choices = getattr(response, "choices", None)
-    if not isinstance(choices, list) or not choices:
-        return ""
-
-    first_choice = choices[0]
-
-    delta = getattr(first_choice, "delta", None)
-    if delta is not None:
-        delta_content = getattr(delta, "content", None)
-        if isinstance(delta_content, str):
-            return delta_content
-
-    message = getattr(first_choice, "message", None)
-    if message is not None:
-        message_content = getattr(message, "content", None)
-        if isinstance(message_content, str):
-            return message_content
-
-    return ""
-
-
-def _extract_stream_text_from_agent_output(output: Any) -> str:
-    if isinstance(output, tuple) and len(output) == 2 and isinstance(output[0], str):
-        return output[0]
-
-    if getattr(output, "type", None) == "response":
-        return _extract_text_from_model_like_response(getattr(output, "response", None))
-
-    return ""
 
 
 def _extract_event_and_origin_from_agent_output(output: Any) -> tuple[Any, Any]:

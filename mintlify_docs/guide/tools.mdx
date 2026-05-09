@@ -1,0 +1,201 @@
+---
+title: Tools
+description: "Define tools with @tool, compose toolsets, and handle multimodal returns"
+---
+
+# Tools
+
+Tools are async functions that the LLM can call. They're the bridge between model reasoning and real-world actions.
+
+## Basic @tool
+
+```python
+from SimpleLLMFunc import tool
+
+
+@tool
+async def get_weather(city: str, unit: str = "celsius") -> str:
+    """
+    Get current weather for a city.
+
+    Args:
+        city: City name (e.g., "Tokyo", "New York").
+        unit: Temperature unit — "celsius" or "fahrenheit".
+
+    Returns:
+        Current weather description.
+
+    Best Practices:
+        - Use full city names, not abbreviations.
+        - Default to celsius unless the user specifies otherwise.
+    """
+    # Your implementation here
+    return f"Sunny, 22°C in {city}"
+```
+
+## Key Rules
+
+1. **Must be async** — `@tool` enforces `async def`. No sync functions.
+2. **Docstring is the spec** — The model sees your docstring as the tool description.
+3. **Best Practices matter** — The `Best Practices` section is injected into the system prompt as `<tool_best_practices>`. Use it to guide the model on when/how to use the tool.
+4. **Type annotations define the schema** — Parameter types become the tool's JSON schema.
+
+## Docstring Structure
+
+```python
+@tool
+async def my_tool(param: str) -> str:
+    """
+    One-line description of what the tool does.
+
+    Longer explanation if needed. This becomes the tool description
+    the model sees.
+
+    Args:
+        param: Description of this parameter.
+
+    Returns:
+        What the tool returns.
+
+    Best Practices:
+        - When to use this tool vs. alternatives.
+        - Common pitfalls to avoid.
+        - Expected input formats.
+    """
+```
+
+## Composing Toolsets
+
+Pass multiple tools to an agent:
+
+```python
+@llm_chat(llm_interface=llm, toolkit=[get_weather, search_docs, calculate])
+async def agent(message: str, history: list | None = None):
+    """Use available tools to answer questions."""
+    pass
+```
+
+## Built-in Toolsets
+
+### FileToolset
+
+Workspace-scoped file operations with stale-write protection:
+
+```python
+from SimpleLLMFunc.builtin import FileToolset
+
+file_tools = FileToolset("/path/to/workspace")
+
+@llm_chat(llm_interface=llm, toolkit=file_tools.toolset)
+async def file_agent(message: str, history: list | None = None):
+    """A file-aware assistant."""
+    pass
+```
+
+FileToolset provides 5 tools: `read_file`, `read_image`, `grep`, `sed`, `echo_into`.
+
+### PyRepl
+
+Persistent Python REPL with runtime primitives:
+
+```python
+from SimpleLLMFunc.builtin import PyRepl
+
+repl = PyRepl(working_directory="/path/to/workspace")
+
+@llm_chat(llm_interface=llm, toolkit=repl.toolset)
+async def code_agent(message: str, history: list | None = None):
+    """Execute Python code to solve problems."""
+    pass
+```
+
+PyRepl provides 2 tools: `execute_code`, `reset_repl`.
+
+## Multimodal Returns
+
+Tools can return images and mixed content:
+
+```python
+from SimpleLLMFunc.type import ImgPath, ImgUrl
+
+
+@tool
+async def generate_chart(data: str) -> ImgPath:
+    """Generate a chart from the data."""
+    # ... create chart, save to file ...
+    return ImgPath(path="/tmp/chart.png")
+
+
+@tool
+async def fetch_screenshot(url: str) -> ImgUrl:
+    """Take a screenshot of a webpage."""
+    return ImgUrl(url="https://screenshot-api.example.com/capture?url=" + url)
+```
+
+Multimodal returns are restructured via `MultimodalToolResultMutation` — the image is placed in a user message (as required by most providers).
+
+## Tuple Returns (mixed content)
+
+Return both text and images:
+
+```python
+@tool
+async def analyze_image(image_path: str) -> tuple[str, ImgPath]:
+    """Analyze an image and return description + annotated version."""
+    description = "A landscape photo..."
+    annotated = ImgPath(path="/tmp/annotated.png")
+    return description, annotated
+```
+
+## Long Output Handling
+
+For tools that produce very long output:
+
+```python
+@tool(too_long_to_file=True)
+async def read_large_file(path: str) -> str:
+    """Read a potentially large file."""
+    with open(path) as f:
+        return f.read()
+```
+
+With `too_long_to_file=True`, if the result exceeds ~20,000 tokens, the framework:
+1. Writes the full output to a temporary file
+2. Sends a truncated version + file path to the model
+3. The model can then read specific sections if needed
+
+## Dynamic Tool Creation
+
+Create tools programmatically:
+
+```python
+from SimpleLLMFunc import Tool
+
+
+def make_api_tool(endpoint: str, description: str) -> Tool:
+    async def call_api(params: str) -> str:
+        # ... call endpoint ...
+        return "result"
+
+    return Tool(
+        name=f"call_{endpoint}",
+        description=description,
+        func=call_api,
+        best_practices=["Use structured JSON for params"],
+    )
+```
+
+## System Prompt Injection
+
+Each tool's `Best Practices` section is collected and injected as a `<tool_best_practices>` block at the top of the system prompt. This is automatic — you don't need to reference tools in your docstring.
+
+Additionally, tools can provide dynamic prompt injection via `prompt_injection_builder`:
+
+```python
+@tool(prompt_injection_builder=lambda ctx: f"Current workspace: {ctx.get('workspace', '/')}")
+async def list_files(path: str) -> str:
+    """List files in a directory."""
+    ...
+```
+
+→ [API Reference: Decorators](/api/decorators) | [API Reference: Builtins](/api/builtins)

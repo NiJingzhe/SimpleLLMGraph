@@ -1,0 +1,116 @@
+---
+title: 以上下文为中心
+description: 为什么上下文是唯一真相源，以及所有变更都通过 Mutation 流转
+---
+
+# 以上下文为中心
+
+SimpleLLMFunc 最重要的架构决策：**上下文是结构化状态机，而不是聊天日志**。
+
+## 问题
+
+在大多数 LLM Agent 系统中，"上下文"意味着"我们发送给模型的消息列表"。这个列表从各处被修改：
+- 工具直接追加结果
+- 编排循环推入助手消息
+- 记忆系统在任意位置注入上下文
+- 摘要器就地覆盖历史
+
+结果：不可预测的上下文。你无法推理模型将看到什么，因为多个组件无协调地写入同一个可变列表。
+
+## Mutation 模型
+
+在 SimpleLLMFunc 中，没有任何东西直接写入上下文。相反：
+
+1. **生产者**（LLM 调用、工具执行、SelfRef 钩子）发出 **Mutation** — 描述应该改变什么的类型化对象
+2. **Mutation 累积**在 ReAct 迭代期间
+3. 在**编译边界**，所有待处理的 mutation 被原子性地应用以产生下一个上下文状态
+4. 只有**编译结果**对 LLM 可见
+
+```
+生产者 → Mutation → [累积] → 编译 → LLM 看到结果
+```
+
+这与数据库事务或 React 的状态批处理相同的原则：收集所有变更，一起应用，产生一致的快照。
+
+## 10 种 Mutation 类型
+
+每种可能的上下文变更都映射到这些类型之一：
+
+| Mutation | 作用 |
+|----------|------|
+| `AssistantMessage` | 追加模型的响应（文本或工具调用） |
+| `ToolResult` | 将工具的输出附加到对应的调用 |
+| `MultimodalToolResult` | 工具返回了图片/混合内容 |
+| `UserMessage` | 追加新的用户消息 |
+| `ContextReplace` | 替换整个消息列表（硬重置） |
+| `ContextSummary` | 用摘要 + 记忆的经验替换 |
+| `ExperienceRemember` | 在系统上下文中存储持久经验 |
+| `ExperienceForget` | 移除已存储的经验 |
+| `AssistantTruncated` | 记录被中断/截断的模型响应 |
+| `ToolCancelled` | 记录被取消的工具调用 |
+
+没有其他方式可以改变上下文。如果你理解这 10 种类型，你就理解了系统中每一种可能的上下文转换。
+
+## 为什么这很重要
+
+### 可预测性
+
+在任何时刻，你都可以回答："模型将看到什么？"——通过查看当前上下文状态 + 待处理的 mutation。没有隐藏的副作用，没有并发工具之间的竞态条件。
+
+### 可审计性
+
+每个变更都有类型化的来源。你可以记录 mutation 来查看确切发生了什么：
+```
+[iter 1] AssistantMessage: "让我搜索一下..."
+[iter 1] ToolResult(id=call_abc): "找到: SimpleLLMFunc 是..."
+[iter 2] AssistantMessage: "根据搜索结果..."
+```
+
+### 安全并发
+
+当多个工具并行执行时，每个都产生自己的 mutation。它们在编译边界被收集并按顺序应用——无需锁，共享消息列表上没有竞态条件。
+
+### 可控压缩
+
+上下文压缩（摘要化）只是另一个 mutation（`ContextSummary`）。它经过相同的管道，遵守相同的排序规则，产生确定性的结果。
+
+## 编译边界
+
+编译边界是 mutation 变成消息的地方：
+
+```
+┌─────────────────────────────────────────────┐
+│  ReAct 迭代 N                                │
+│                                              │
+│  LLM 调用 → AssistantMessage mutation        │
+│  工具执行 → ToolResult mutation              │
+│  SelfRef 钩子 → Experience mutation          │
+│                                              │
+├──────────── 编译边界 ────────────────────────┤
+│                                              │
+│  apply_mutations(state, pending_mutations)   │
+│  → 产生新的 ContextState                     │
+│                                              │
+│  convert_to_llm_request(context)             │
+│  → 产生发送给提供商的 messages[]              │
+│                                              │
+└─────────────────────────────────────────────┘
+```
+
+参见[编译管道](/zh/context/compile-pipeline)了解完整技术细节。
+
+## 实际影响
+
+对于大多数用户，这是不可见的——你写一个函数，它就工作了。Mutation 模型是让它可靠工作的实现细节。
+
+但当你需要：
+- 理解为什么 Agent "忘记了"某些东西 → 检查哪个 mutation 替换了上下文
+- 构建自定义记忆系统 → 发出正确的 mutation
+- 调试意外行为 → 追踪 mutation 日志
+- 实现上下文压缩 → 通过 SelfRef 使用 `ContextSummary` mutation
+
+…mutation 模型给你一个完整的、类型化的词汇表，覆盖每一种可能的上下文变更。
+
+<Card title="深入：所有 10 种 Mutation" icon="list" href="/zh/context/mutations">
+  查看每种 mutation 类型，它何时触发，以及它产生什么。
+</Card>

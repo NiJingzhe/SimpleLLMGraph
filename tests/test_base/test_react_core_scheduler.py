@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from SimpleLLMFunc.base.types import ToolCancelledMutation, ToolResultMutation, UserMessageMutation
+from SimpleLLMFunc.base.types import MultimodalToolResultMutation, ToolCancelledMutation, ToolResultMutation
+from SimpleLLMFunc.base.tool_call.execution import ExecutedToolCallResult
 from SimpleLLMFunc.base.tool_scheduler import ToolSchedulerResult, schedule_tool_batch
 from SimpleLLMFunc.hooks.abort import AbortSignal
 from SimpleLLMFunc.hooks.event_bus import EventBus
@@ -16,12 +17,13 @@ from SimpleLLMFunc.hooks.stream import EventYield
 
 @pytest.mark.asyncio
 async def test_schedule_tool_batch_yields_events_and_result_mutation() -> None:
-    async def fake_execute_single_tool_call(tool_call, tool_map, event_emitter=None, trace_context=None):
+    async def fake_execute_single_tool_call_result(tool_call, tool_map, event_emitter=None, trace_context=None):
         _ = (tool_map, event_emitter, trace_context)
-        return (
-            tool_call,
-            [{"role": "tool", "tool_call_id": tool_call["id"], "content": '"ok"'}],
-            False,
+        return ExecutedToolCallResult(
+            tool_call=tool_call,
+            tool_call_id=tool_call["id"],
+            tool_name=tool_call["function"]["name"],
+            messages=[{"role": "tool", "tool_call_id": tool_call["id"], "content": '"ok"'}],
         )
 
     tool_call = {
@@ -32,8 +34,8 @@ async def test_schedule_tool_batch_yields_events_and_result_mutation() -> None:
 
     outputs = []
     with patch(
-        "SimpleLLMFunc.base.tool_scheduler._execute_single_tool_call",
-        new=fake_execute_single_tool_call,
+        "SimpleLLMFunc.base.tool_scheduler.execute_single_tool_call_result",
+        new=fake_execute_single_tool_call_result,
     ):
         async for output in schedule_tool_batch(
             tool_calls=[tool_call],
@@ -61,11 +63,13 @@ async def test_schedule_tool_batch_yields_events_and_result_mutation() -> None:
 
 @pytest.mark.asyncio
 async def test_schedule_tool_batch_maps_multimodal_messages_to_user_message_mutation() -> None:
-    async def fake_execute_single_tool_call(tool_call, tool_map, event_emitter=None, trace_context=None):
+    async def fake_execute_single_tool_call_result(tool_call, tool_map, event_emitter=None, trace_context=None):
         _ = (tool_map, event_emitter, trace_context)
-        return (
-            tool_call,
-            [
+        return ExecutedToolCallResult(
+            tool_call=tool_call,
+            tool_call_id=tool_call["id"],
+            tool_name=tool_call["function"]["name"],
+            messages=[
                 {
                     "role": "user",
                     "content": [
@@ -74,7 +78,7 @@ async def test_schedule_tool_batch_maps_multimodal_messages_to_user_message_muta
                     ],
                 }
             ],
-            True,
+            is_multimodal=True,
         )
 
     tool_call = {
@@ -85,8 +89,8 @@ async def test_schedule_tool_batch_maps_multimodal_messages_to_user_message_muta
 
     outputs = []
     with patch(
-        "SimpleLLMFunc.base.tool_scheduler._execute_single_tool_call",
-        new=fake_execute_single_tool_call,
+        "SimpleLLMFunc.base.tool_scheduler.execute_single_tool_call_result",
+        new=fake_execute_single_tool_call_result,
     ):
         async for output in schedule_tool_batch(
             tool_calls=[tool_call],
@@ -100,18 +104,22 @@ async def test_schedule_tool_batch_maps_multimodal_messages_to_user_message_muta
 
     result = outputs[-1]
     assert isinstance(result, ToolSchedulerResult)
-    assert isinstance(result.mutations[0], UserMessageMutation)
-    assert result.mutations[0].message["role"] == "user"
+    assert isinstance(result.mutations[0], MultimodalToolResultMutation)
+    assert result.mutations[0].user_messages[0]["role"] == "user"
 
 
 @pytest.mark.asyncio
 async def test_schedule_tool_batch_abort_builds_tool_cancelled_mutations() -> None:
     abort_signal = AbortSignal()
 
-    async def fake_execute_single_tool_call(tool_call, tool_map, event_emitter=None, trace_context=None):
-        _ = (tool_call, tool_map, event_emitter, trace_context)
+    async def fake_execute_single_tool_call_result(tool_call, tool_map, event_emitter=None, trace_context=None):
+        _ = (tool_map, event_emitter, trace_context)
         await asyncio.sleep(0.05)
-        return ({}, [], False)
+        return ExecutedToolCallResult(
+            tool_call=tool_call,
+            tool_call_id=str(tool_call.get("id", "")),
+            tool_name=str(tool_call.get("function", {}).get("name", "")),
+        )
 
     tool_calls = [
         {
@@ -132,8 +140,8 @@ async def test_schedule_tool_batch_abort_builds_tool_cancelled_mutations() -> No
 
     outputs = []
     with patch(
-        "SimpleLLMFunc.base.tool_scheduler._execute_single_tool_call",
-        new=fake_execute_single_tool_call,
+        "SimpleLLMFunc.base.tool_scheduler.execute_single_tool_call_result",
+        new=fake_execute_single_tool_call_result,
     ):
         abort_task = asyncio.create_task(trigger_abort())
         async for output in schedule_tool_batch(
@@ -157,7 +165,7 @@ async def test_schedule_tool_batch_abort_builds_tool_cancelled_mutations() -> No
 
 @pytest.mark.asyncio
 async def test_schedule_tool_batch_yields_tool_emitter_events_before_tool_end() -> None:
-    async def fake_execute_single_tool_call(tool_call, tool_map, event_emitter=None, trace_context=None):
+    async def fake_execute_single_tool_call_result(tool_call, tool_map, event_emitter=None, trace_context=None):
         _ = (tool_call, tool_map, trace_context)
         assert event_emitter is not None
         await event_emitter.emit(
@@ -170,10 +178,11 @@ async def test_schedule_tool_batch_yields_tool_emitter_events_before_tool_end() 
             },
         )
         await asyncio.sleep(0)
-        return (
-            tool_call,
-            [{"role": "tool", "tool_call_id": tool_call["id"], "content": '"ok"'}],
-            False,
+        return ExecutedToolCallResult(
+            tool_call=tool_call,
+            tool_call_id=tool_call["id"],
+            tool_name=tool_call["function"]["name"],
+            messages=[{"role": "tool", "tool_call_id": tool_call["id"], "content": '"ok"'}],
         )
 
     tool_call = {
@@ -184,8 +193,8 @@ async def test_schedule_tool_batch_yields_tool_emitter_events_before_tool_end() 
 
     outputs = []
     with patch(
-        "SimpleLLMFunc.base.tool_scheduler._execute_single_tool_call",
-        new=fake_execute_single_tool_call,
+        "SimpleLLMFunc.base.tool_scheduler.execute_single_tool_call_result",
+        new=fake_execute_single_tool_call_result,
     ):
         async for output in schedule_tool_batch(
             tool_calls=[tool_call],

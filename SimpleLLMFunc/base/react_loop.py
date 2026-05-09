@@ -18,7 +18,6 @@ from SimpleLLMFunc.base.types import (
     SingleLLMPhaseResultYield,
     ToolSchedulerResult,
 )
-from SimpleLLMFunc.base.types import ContextMutation
 from SimpleLLMFunc.base.react_hooks import (
     ReActHookExecutionContext,
     collect_react_context_mutations,
@@ -506,7 +505,7 @@ async def run_react_loop(
         loop_state.context_state = ContextState(
             messages=clone_messages(state.messages),
             data_from_selfref=(
-                compiled_after_tools.data_from_selfref
+                compiled_after_tools.data_from_selfref  # type: ignore
                 if active_messages_after_tools == pre_tool_messages
                 else compiled_tool_context.data_from_selfref
             ),
@@ -548,6 +547,7 @@ async def ReAct_loop(
     tool_prompt_specs: Optional[list[Dict[str, Any]]] = None,
     include_must_principles: bool = False,
     invocation_spec: Optional[InvocationSpec] = None,
+    toolkit: Any = None,  # accepted but not used; prevents leak into **llm_kwargs
     **llm_kwargs: Any,
 ) -> AsyncGenerator[ReactOutput, None]:
     """Event-only ReAct loop public entrypoint."""

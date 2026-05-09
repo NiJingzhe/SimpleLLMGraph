@@ -68,7 +68,7 @@ def reduce_turn_context(
         parsed_source = parse_data_from_selfref(
             cast(List[Dict[str, Any]], applied_transcript)
         )
-        _base_prompt, parsed_experiences = split_system_prompt_experiences(
+        _, parsed_experiences = split_system_prompt_experiences(
             parsed_source.base_system_prompt
         )
         has_selfref_markers = bool(

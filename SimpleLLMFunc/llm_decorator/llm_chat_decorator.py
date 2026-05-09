@@ -318,30 +318,6 @@ def _remove_must_principles_prompt_block(system_prompt: str) -> str:
     )
     return cleaned_prompt.strip()
 
-
-def _append_must_principles_prompt_to_messages(messages: MessageList) -> None:
-    prompt_block = _build_must_principles_prompt_block()
-
-    for index, message in enumerate(messages):
-        if message.get("role") != "system":
-            continue
-
-        content = message.get("content")
-        base_prompt = ""
-        if isinstance(content, str):
-            base_prompt = _remove_must_principles_prompt_block(content)
-
-        if base_prompt:
-            merged_prompt = f"{base_prompt}\n\n{prompt_block}"
-        else:
-            merged_prompt = prompt_block
-
-        messages[index] = cast(MessageList, [cast(NormalizedMessageParam, {**message, "content": merged_prompt})])[0]
-        return
-
-    messages.insert(0, {"role": "system", "content": prompt_block})
-
-
 def _extract_first_system_prompt_from_messages(messages: MessageList) -> Optional[str]:
     for message in messages:
         if message.get("role") != "system":

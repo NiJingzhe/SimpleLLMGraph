@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import json
+from dataclasses import dataclass, field
 from typing import (
     Any,
     Awaitable,
@@ -22,16 +22,26 @@ from langfuse.types import TraceContext
 from SimpleLLMFunc.logger import push_debug, push_error, push_warning
 from SimpleLLMFunc.logger.logger import get_location
 from SimpleLLMFunc.type.multimodal import ImgPath, ImgUrl, Text
-from SimpleLLMFunc.hooks.abort import AbortSignal
 from SimpleLLMFunc.observability.langfuse_client import (
     coerce_langfuse_metadata,
-    get_langfuse_trace_context,
     langfuse_client,
 )
 from SimpleLLMFunc.base.tool_call.extraction import (
     parse_tool_call_arguments,
     repair_tool_call_arguments,
 )
+
+
+@dataclass
+class ExecutedToolCallResult:
+    tool_call: Dict[str, Any]
+    tool_call_id: str
+    tool_name: str
+    messages: List[Dict[str, Any]] = field(default_factory=list)
+    result: Any = None
+    is_multimodal: bool = False
+    success: bool = True
+    error: Optional[Exception] = None
 
 
 def _convert_tool_arguments(
@@ -191,30 +201,18 @@ def _convert_tool_arguments(
         return arguments
 
 
-async def _execute_single_tool_call(
+async def execute_single_tool_call_result(
     tool_call: Dict[str, Any],
     tool_map: Dict[str, Callable[..., Awaitable[Any]]],
     event_emitter: Any = None,
     trace_context: Optional[TraceContext] = None,
-) -> tuple[Dict[str, Any], List[Dict[str, Any]], bool]:
+) -> ExecutedToolCallResult:
     """Execute a single tool call and return its results.
 
-    处理两类工具调用结果：
-    1. 普通工具调用（返回 JSON 可序列化的文本/对象）
-       - 返回 is_multimodal=False
-       - 消息列表包含标准的 tool role message
-       - 这些结果会直接添加到消息历史中
+    Returns a structured tool call execution result.
 
-    2. 多模态工具调用（返回图像、文件等）
-       - 返回 is_multimodal=True
-       - 消息列表包含 user role message，带有多模态内容（图像、文件等）
-       - 这些结果不能通过标准的 OpenAI tool_call 机制传输
-       - 因此需要特殊处理：移除原始 assistant message 中的 tool_call，
-         用 assistant + user 消息对替代
-
-    Returns:
-        Tuple of (tool_call_dict, list_of_messages_to_append, is_multimodal)
-        其中 is_multimodal 指示是否为多模态结果
+    The returned object carries both the raw execution result and the generated
+    message patches, with a dedicated multimodal flag for higher layers.
     """
 
     tool_call_id = tool_call.get("id")
@@ -233,7 +231,14 @@ async def _execute_single_tool_call(
             ),
         }
         messages_to_append.append(tool_error_message)
-        return (tool_call, messages_to_append, False)
+        return ExecutedToolCallResult(
+            tool_call=tool_call,
+            tool_call_id=str(tool_call_id or ""),
+            tool_name=str(tool_name or ""),
+            messages=messages_to_append,
+            result={"error": f"Tool '{tool_name}' was not found"},
+            success=False,
+        )
 
     # 使用 Langfuse 观测工具调用
     with langfuse_client.start_as_current_observation(
@@ -256,7 +261,6 @@ async def _execute_single_tool_call(
             if arguments is None:
                 raise ValueError("Tool arguments are not a valid JSON object")
 
-            # 更新为解析后的参数
             tool_span.update(input=arguments)
 
             push_debug(f"Executing tool '{tool_name}' with arguments: {arguments_str}")
@@ -315,7 +319,13 @@ async def _execute_single_tool_call(
                     "content": tool_result_content_json,
                 }
                 messages_to_append.append(tool_message)
-                return (tool_call, messages_to_append, False)
+                return ExecutedToolCallResult(
+                    tool_call=tool_call,
+                    tool_call_id=str(tool_call_id or ""),
+                    tool_name=str(tool_name or ""),
+                    messages=messages_to_append,
+                    result=str(tool_result),
+                )
 
             if isinstance(tool_result, ImgUrl):
                 image_content = {
@@ -331,13 +341,20 @@ async def _execute_single_tool_call(
                     "content": [
                         {
                             "type": "text",
-                            "text": f"这是工具 '{tool_name}' 返回的图像：",
+                            "text": f"This is an image returned by tool '{tool_name}':",
                         },
                         image_content,
                     ],
                 }
                 messages_to_append.append(user_multimodal_message)
-                return (tool_call, messages_to_append, True)
+                return ExecutedToolCallResult(
+                    tool_call=tool_call,
+                    tool_call_id=str(tool_call_id or ""),
+                    tool_name=str(tool_name or ""),
+                    messages=messages_to_append,
+                    result=tool_result,
+                    is_multimodal=True,
+                )
 
             if isinstance(tool_result, ImgPath):
                 base64_img = tool_result.to_base64()
@@ -357,13 +374,20 @@ async def _execute_single_tool_call(
                     "content": [
                         {
                             "type": "text",
-                            "text": f"这是工具 '{tool_name}' 返回的图像文件：",
+                            "text": f"This is an image file returned by tool '{tool_name}':",
                         },
                         image_content,
                     ],
                 }
                 messages_to_append.append(user_multimodal_message)
-                return (tool_call, messages_to_append, True)
+                return ExecutedToolCallResult(
+                    tool_call=tool_call,
+                    tool_call_id=str(tool_call_id or ""),
+                    tool_name=str(tool_name or ""),
+                    messages=messages_to_append,
+                    result=tool_result,
+                    is_multimodal=True,
+                )
 
             if isinstance(tool_result, tuple) and len(tool_result) == 2:
                 text_part, img_part = tool_result
@@ -381,13 +405,20 @@ async def _execute_single_tool_call(
                         "content": [
                             {
                                 "type": "text",
-                                "text": f"这是工具 '{tool_name}' 返回的图像和说明：{text_part}",
+                                "text": f"This is an image and description returned by tool '{tool_name}': {text_part}",
                             },
                             image_content,
                         ],
                     }
                     messages_to_append.append(user_multimodal_message)
-                    return (tool_call, messages_to_append, True)
+                    return ExecutedToolCallResult(
+                        tool_call=tool_call,
+                        tool_call_id=str(tool_call_id or ""),
+                        tool_name=str(tool_name or ""),
+                        messages=messages_to_append,
+                        result=tool_result,
+                        is_multimodal=True,
+                    )
 
                 if isinstance(text_part, str) and isinstance(img_part, ImgPath):
                     base64_img = img_part.to_base64()
@@ -407,13 +438,20 @@ async def _execute_single_tool_call(
                         "content": [
                             {
                                 "type": "text",
-                                "text": f"这是工具 '{tool_name}' 返回的图像文件和说明：{text_part}",
+                                "text": f"This is an image file and description returned by tool '{tool_name}': {text_part}",
                             },
                             image_content,
                         ],
                     }
                     messages_to_append.append(user_multimodal_message)
-                    return (tool_call, messages_to_append, True)
+                    return ExecutedToolCallResult(
+                        tool_call=tool_call,
+                        tool_call_id=str(tool_call_id or ""),
+                        tool_name=str(tool_name or ""),
+                        messages=messages_to_append,
+                        result=tool_result,
+                        is_multimodal=True,
+                    )
 
                 tool_result_content_json = json.dumps(
                     tool_result, ensure_ascii=False, indent=2
@@ -427,7 +465,13 @@ async def _execute_single_tool_call(
                 push_debug(
                     f"Tool '{tool_name}' completed: {tool_result_content_json}"
                 )
-                return (tool_call, messages_to_append, False)
+                return ExecutedToolCallResult(
+                    tool_call=tool_call,
+                    tool_call_id=str(tool_call_id or ""),
+                    tool_name=str(tool_name or ""),
+                    messages=messages_to_append,
+                    result=tool_result,
+                )
 
             if isinstance(tool_result, (Text, str)):
                 tool_result_content_json = json.dumps(
@@ -483,166 +527,26 @@ async def _execute_single_tool_call(
                 ),
             }
             messages_to_append.append(tool_error_message)
-
-    return (tool_call, messages_to_append, False)
-
-
-async def process_tool_calls(
-    tool_calls: List[Dict[str, Any]],
-    messages: List[Dict[str, Any]],
-    tool_map: Dict[str, Callable[..., Awaitable[Any]]],
-    event_emitter: Any = None,
-    abort_signal: Optional[AbortSignal] = None,
-) -> List[Dict[str, Any]]:
-    """Execute tool calls concurrently and append results to the message history.
-
-    All tool calls are executed in parallel using structured concurrency with asyncio.gather(),
-    then results are appended to messages in the original order.
-
-    对于多模态工具调用，会先插入一个 assistant message 说明将使用该工具，
-    然后再插入工具结果的 user message。
-
-    IMPORTANT: 此函数会修改 `messages` 参数中的原始字典对象（特别是 assistant message），
-    这是**必需的行为**，而非 bug，原因如下：
-
-    1. 多模态工具调用处理：
-       - OpenAI API 的 tool_call 机制无法传输图像等多模态内容
-       - 对于多模态工具调用（返回图片、文件等），我们需要：
-         a) 从原始 assistant message 中移除该工具的 tool_call 定义
-         b) 用自定义的 assistant + user 消息对替代（用户在 user message 中提供多模态内容）
-       - 这就是为什么需要修改原始 messages 中的 assistant message 对象
-
-    2. 为什么不用 deep copy：
-       - deep copy 会增加内存开销
-       - 业务逻辑本身需要改变消息结构
-       - 调用者最终收到的 messages 就包含了这些必要的修改
-
-    Args:
-        tool_calls: 要执行的工具调用列表
-        messages: 消息历史列表。**会被就地修改**（仅修改 assistant message，不改变列表本身）
-        tool_map: 工具名称到函数的映射字典
-
-    Returns:
-        修改后的完整消息列表，包含原始消息、工具调用结果和多模态替代消息
-    """
-
-    if not tool_calls:
-        return messages
-
-    if abort_signal is not None and abort_signal.is_aborted:
-        return messages
-
-    # Execute all tool calls concurrently
-    trace_context = get_langfuse_trace_context()
-    tasks = [
-        asyncio.create_task(
-            _execute_single_tool_call(
-                tool_call,
-                tool_map,
-                event_emitter,
-                trace_context=trace_context,
+            return ExecutedToolCallResult(
+                tool_call=tool_call,
+                tool_call_id=str(tool_call_id or ""),
+                tool_name=str(tool_name or ""),
+                messages=messages_to_append,
+                result={"error": error_message},
+                success=False,
+                error=exc,
             )
-        )
-        for tool_call in tool_calls
-    ]
 
-    if abort_signal is None:
-        results = await asyncio.gather(*tasks)
-    else:
-        abort_task = asyncio.create_task(abort_signal.wait())
-        gather_future = asyncio.gather(*tasks)
-        done, _ = await asyncio.wait(
-            {abort_task, gather_future},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        if abort_task in done:
-            gather_future.cancel()
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            await asyncio.gather(gather_future, return_exceptions=True)
-            return messages
-        abort_task.cancel()
-        results = await gather_future
+    return ExecutedToolCallResult(
+        tool_call=tool_call,
+        tool_call_id=str(tool_call_id or ""),
+        tool_name=str(tool_name or ""),
+        messages=messages_to_append,
+        result=tool_result,
+    )
 
-    # 分类结果：普通工具调用和多模态工具调用
-    normal_results: List[List[Dict[str, Any]]] = []
-    multimodal_results: List[tuple[Dict[str, Any], List[Dict[str, Any]]]] = []
-    multimodal_tool_call_ids: set[str] = set()
 
-    for tool_call_dict, messages_to_append, is_multimodal in results:
-        if is_multimodal:
-            multimodal_results.append((tool_call_dict, messages_to_append))
-            tool_call_id = tool_call_dict.get("id")
-            if tool_call_id:
-                multimodal_tool_call_ids.add(tool_call_id)
-        else:
-            normal_results.append(messages_to_append)
-
-    # =========================================================================
-    # 阶段 1: 从原始 messages 中移除多模态工具调用的 tool_calls
-    # =========================================================================
-    # 这一步是**必需的**，原因如下：
-    # 1. 多模态工具调用无法通过标准的 OpenAI tool_call 机制传输（OpenAI API 不支持）
-    # 2. 因此我们需要从消息历史中移除这些 tool_calls
-    # 3. 后续会用 assistant + user 消息对替代（user message 中包含多模态内容）
-    # 4. 修改原始 messages 中的字典对象是合理的，因为这些改动必须被反映到最终结果中
-    # =========================================================================
-    if multimodal_tool_call_ids:
-        # 找到最后一个包含tool_calls的assistant message
-        for i in range(len(messages) - 1, -1, -1):
-            msg = messages[i]
-            if msg.get("role") == "assistant" and "tool_calls" in msg:
-                original_tool_calls = msg["tool_calls"]
-                # 过滤掉多模态工具调用，保留普通工具调用
-                filtered_tool_calls = [
-                    tc
-                    for tc in original_tool_calls
-                    if tc.get("id") not in multimodal_tool_call_ids
-                ]
-
-                if not filtered_tool_calls:
-                    # 如果所有tool_calls都是多模态的，移除tool_calls字段
-                    # 并用空字符串替代content（不能是None，因为那是tool_call专用格式）
-                    del msg["tool_calls"]
-                    if msg.get("content") is None:
-                        msg["content"] = ""
-                else:
-                    # 否则更新为过滤后的tool_calls（只保留普通工具调用）
-                    msg["tool_calls"] = filtered_tool_calls
-                break
-
-    # =========================================================================
-    # 阶段 2: 构建最终消息列表
-    # =========================================================================
-    # 从修改后的 messages 开始（已移除多模态工具调用），然后追加结果
-    # 注：这里的 .copy() 只是为了创建新列表对象，不是 defensive copy
-    #    因为已经在上面修改了原始 messages 中的字典内容（assistant message）
-    #    这些修改是必需的，不需要"防守"
-    current_messages = messages.copy()
-    for msgs in normal_results:
-        current_messages.extend(msgs)
-
-    # =========================================================================
-    # 阶段 3: 处理多模态工具调用结果
-    # =========================================================================
-    # 多模态工具调用（返回图像、文件等）需要特殊处理：
-    # 1. 创建一个 assistant message 说明将使用该工具
-    # 2. 然后添加用户提供的 user message（包含多模态内容）
-    # 这样做是因为 OpenAI API 的标准 tool_call 机制无法处理多模态结果
-    # 所以我们用消息对的方式来模拟工具调用的交互过程
-    for tool_call_dict, user_messages in multimodal_results:
-        tool_name = tool_call_dict.get("function", {}).get("name", "unknown")
-        arguments = tool_call_dict.get("function", {}).get("arguments", "{}")
-
-        # 创建assistant message说明将使用该工具
-        assistant_message = {
-            "role": "assistant",
-            "content": f"我将求助用户使用 {tool_name} 工具来获取结果，使用参数为：{arguments}，请用户按照工具的描述和参数要求，提供符合要求的结果。",
-        }
-        current_messages.append(assistant_message)
-
-        # 添加工具返回的user message（包含多模态内容）
-        current_messages.extend(user_messages)
-
-    return current_messages
+__all__ = [
+    "ExecutedToolCallResult",
+    "execute_single_tool_call_result",
+]

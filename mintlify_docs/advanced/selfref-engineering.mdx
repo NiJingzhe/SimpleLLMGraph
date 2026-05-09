@@ -1,0 +1,209 @@
+---
+title: SelfRef Engineering
+description: Advanced patterns for fork orchestration, compaction strategies, and multi-key memory
+---
+
+# SelfRef Engineering
+
+This page covers advanced SelfRef patterns for production agent architectures.
+
+## Compaction Strategy
+
+### When to Compact
+
+Compact when:
+- Token usage approaches context window limits
+- A logical milestone is complete (task finished, phase transition)
+- The working transcript contains mostly stale information (old tool outputs, superseded plans)
+
+### What Makes a Good Compact Call
+
+```python
+payload = runtime.selfref.context.compact(
+    goal="Implement user authentication with OAuth",
+    instruction="Continue with refresh token logic. Token exchange is working.",
+    discoveries=[
+        "OAuth provider requires PKCE challenge",
+        "Access tokens expire in 1 hour",
+        "Refresh endpoint: POST /oauth/token with grant_type=refresh_token",
+    ],
+    completed=[
+        "Set up project structure",
+        "Implemented PKCE challenge generation",
+        "Built token exchange endpoint (tested, working)",
+    ],
+    current_status="Token exchange works. Next: refresh token flow.",
+    likely_next_work="Implement refresh token rotation, add token storage, write integration tests",
+    relevant_files_directories=[
+        "src/auth/oauth.py",
+        "src/auth/token_store.py",
+        "tests/test_auth.py",
+    ],
+    remember=["OAuth provider requires PKCE — never skip it"],
+)
+```
+
+Key rules:
+- `discoveries` = facts learned that may be needed later
+- `completed` = what's done (so the agent doesn't redo it)
+- `current_status` = where we stopped
+- `likely_next_work` = what to do next (gives the resuming agent direction)
+- `remember` = short durable lessons that should persist as experiences (use sparingly)
+
+### Compaction Lifecycle
+
+1. `compact(...)` is called inside `execute_code`
+2. The compaction is **queued** (not applied immediately)
+3. After the current tool batch finishes, `ContextSummaryMutation` is applied
+4. System prompt + experiences are preserved
+5. Working transcript is replaced with the summary message
+6. The agent's next turn starts with fresh, compact context
+
+### Auto-Compaction Pattern
+
+Inject compaction instructions when approaching token limits:
+
+```python
+COMPACTION_THRESHOLD = 0.3  # 30% of context window
+
+def should_compact(llm) -> bool:
+    used = llm.input_token_count + llm.output_token_count
+    return used > llm.context_window * COMPACTION_THRESHOLD
+
+def prepare_message(message: str) -> str:
+    if should_compact(llm):
+        return message + "\n\nAfter completing this task, compact your context."
+    return message
+```
+
+## Fork Orchestration
+
+### Basic Fork Pattern
+
+```python
+# Inside execute_code:
+
+# Spawn children
+handle_a = runtime.selfref.fork.spawn(
+    task="Review src/auth/ for security issues",
+    instruction="Check for: injection, auth bypass, secret leakage. Return a list of findings.",
+)
+
+handle_b = runtime.selfref.fork.spawn(
+    task="Write unit tests for src/auth/oauth.py",
+    instruction="Cover: token exchange, PKCE validation, error cases. Write to tests/test_oauth.py.",
+)
+
+print(f"Spawned: {handle_a['fork_id']}, {handle_b['fork_id']}")
+
+# ... parent continues working on other things ...
+
+# Gather when ready
+results = runtime.selfref.fork.gather_all()
+for fork_id, result in results.items():
+    print(f"{fork_id}: {result['status']}")
+    if result['status'] == 'completed':
+        print(f"  Response: {result['response'][:200]}")
+```
+
+### Fork Design Rules
+
+1. **Children inherit pre-fork context** — They see the parent's conversation up to the moment before the fork tool call. They do NOT see the parent's fork call itself.
+
+2. **Children are independent** — They cannot read or modify the parent's context. Each child has its own isolated ReAct loop.
+
+3. **Gather blocks** — `gather_all()` waits until all spawned children complete. Don't call it immediately after spawn unless you actually need results now.
+
+4. **Keep tasks bounded** — Give each child a clear scope, acceptance criteria, and stop condition. Unbounded tasks waste tokens.
+
+5. **Ask for summaries** — Tell children to return concise results + file paths, not full transcripts. Use `include_history=True` only when you need to inspect their reasoning.
+
+### Fork vs. Sequential
+
+Use forks when:
+- Tasks are independent (no data dependencies between them)
+- Tasks are substantial enough to justify the overhead of a child context
+- Parallelism saves wall-clock time
+
+Use sequential tool calls when:
+- Tasks depend on each other's outputs
+- Tasks are small (one tool call each)
+- You need intermediate results to decide next steps
+
+## Multi-Key Memory
+
+SelfReference supports multiple memory keys for partitioned state:
+
+```python
+from SimpleLLMFunc.builtin import SelfReference
+
+selfref = SelfReference()
+
+# Bind different histories to different keys
+selfref.bind_history("coding", coding_history)
+selfref.bind_history("research", research_history)
+```
+
+Use cases:
+- Separate agent personas within one application
+- Long-running project memory vs. ephemeral task context
+- Shared reference context vs. per-user conversation
+
+Each key has independent: history, experiences, summary state, and fork handles.
+
+## Experience Management
+
+### When to Remember
+
+Good experiences:
+- Durable lessons ("this API requires auth header X")
+- User preferences ("prefers concise output")
+- Project conventions ("always use pytest, not unittest")
+
+Bad experiences:
+- Transient state ("currently working on file X") — put this in compact summary instead
+- Large data — experiences live in system prompt, keep them short
+- Temporary context — use working messages or compact checkpoint instead
+
+### Pruning Experiences
+
+```python
+# Inspect current experiences
+snapshot = runtime.selfref.context.inspect()
+for exp in snapshot["experiences"]:
+    print(f"  {exp['id']}: {exp['text']}")
+
+# Remove stale ones
+runtime.selfref.context.forget("exp_old_001")
+```
+
+## Production Pattern: Durable Agent
+
+```python
+repl = PyRepl(working_directory=workspace)
+file_tools = FileToolset(workspace).toolset
+
+@llm_chat(
+    llm_interface=llm,
+    toolkit=[*repl.toolset, *file_tools],
+    stream=True,
+    self_reference_key="project_agent",
+)
+async def project_agent(message: str, history: list | None = None):
+    """
+    Long-running project agent with durable memory.
+
+    Use runtime.selfref.context.remember(...) for durable project facts.
+    Use runtime.selfref.context.compact(...) at milestones.
+    Use runtime.selfref.fork.spawn(...) for parallelizable subtasks.
+    """
+    pass
+```
+
+This agent:
+- Remembers across sessions (experiences persist in SelfReference backend)
+- Compacts context at milestones (keeps context fresh)
+- Delegates work to forks (parallelism for complex tasks)
+- Has full file and code access (via toolsets)
+
+→ [Context: SelfRef](/context/selfref) | [API Reference: Runtime](/api/runtime)

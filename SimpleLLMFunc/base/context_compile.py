@@ -19,6 +19,7 @@ from SimpleLLMFunc.base.types import (
     ContextSummaryMutation,
     ExperienceForgetMutation,
     ExperienceRememberMutation,
+    MultimodalToolResultMutation,
     ToolCancelledMutation,
     ToolResultMutation,
     UserMessageMutation,
@@ -63,6 +64,57 @@ def _build_tool_result_message(
             "content": content,
         },
     )
+
+
+def _remove_tool_call_from_latest_assistant(
+    messages: NormalizedMessageList,
+    tool_call_id: str,
+) -> None:
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if message.get("role") != "assistant" or "tool_calls" not in message:
+            continue
+
+        tool_calls = message.get("tool_calls")
+        if not isinstance(tool_calls, list):
+            continue
+
+        filtered_tool_calls = [
+            tool_call
+            for tool_call in tool_calls
+            if tool_call.get("id") != tool_call_id
+        ]
+        if len(filtered_tool_calls) == len(tool_calls):
+            continue
+
+        if filtered_tool_calls:
+            message["tool_calls"] = filtered_tool_calls
+        else:
+            del message["tool_calls"]
+            if message.get("content") is None:
+                message["content"] = ""
+        return
+
+
+def _append_multimodal_tool_result_mutation(
+    messages: NormalizedMessageList,
+    mutation: MultimodalToolResultMutation,
+) -> None:
+    _remove_tool_call_from_latest_assistant(messages, mutation.tool_call_id)
+    messages.append(
+        cast(
+            NormalizedMessageParam,
+            {
+                "role": "assistant",
+                "content": (
+                    f"I will ask the user to provide the result from tool "
+                    f"'{mutation.tool_name}' with arguments: {mutation.arguments}."
+                ),
+            },
+        )
+    )
+    for message in mutation.user_messages:
+        messages.append(copy.deepcopy(cast(NormalizedMessageParam, message)))
 
 
 def _append_tool_cancelled_mutation(
@@ -197,6 +249,10 @@ def apply_mutations(
                     mutation.content,
                 )
             )
+            continue
+        if isinstance(mutation, MultimodalToolResultMutation):
+            _apply_pending_experience_mutations()
+            _append_multimodal_tool_result_mutation(current, mutation)
             continue
         if isinstance(mutation, UserMessageMutation):
             _apply_pending_experience_mutations()

@@ -40,7 +40,7 @@ def process_response(response: Any, return_type: Optional[Type[T]]) -> T:
     try:
         return cast(T, content)
     except (ValueError, TypeError) as exc:
-        raise ValueError(f"无法将 LLM 响应转换为所需类型: {content}") from exc
+        raise ValueError(f"Cannot parse LLM output as expected type: {content}") from exc
 
 
 def extract_content_from_response(response: Any, func_name: str) -> str:
@@ -127,9 +127,9 @@ def _convert_to_primitive_type(content: str, return_type: Type) -> Any:
             return content.strip().lower() in ("true", "yes", "1")
     except (ValueError, TypeError) as exc:
         raise ValueError(
-            f"无法将 LLM 响应 '{content}' 转换为 {return_type.__name__} 类型"
+            f"Cannot convert LLM response: '{content}' into type: {return_type.__name__}"
         ) from exc
-    raise ValueError(f"不支持的基本类型转换: {return_type}")
+    raise ValueError(f"Unsupported type convertion: {return_type}")
 
 
 def _extract_xml_content(content: str) -> str:
@@ -161,10 +161,10 @@ def _convert_from_xml(content: str, func_name: str) -> Dict[str, Any]:
         return xml_to_dict(xml_content)
     except Exception as exc:
         push_error(
-            f"LLM 函数 '{func_name}': XML 解析失败: {str(exc)}, 内容: {content[:200]}",
+            f"LLM function '{func_name}': XML parsing failed: {str(exc)}, content: {content[:200]}",
             location=get_location(),
         )
-        raise ValueError(f"无法将 LLM 响应解析为有效的 XML: {str(exc)}") from exc
+        raise ValueError(f"Cannot parse LLM response as valid XML: {str(exc)}") from exc
 
 
 def _convert_xml_to_list(content: str, list_type: Any, func_name: str) -> List[Any]:
@@ -173,7 +173,7 @@ def _convert_xml_to_list(content: str, list_type: Any, func_name: str) -> List[A
 
     try:
         if not content.strip():
-            raise ValueError("收到空响应")
+            raise ValueError("Received empty response")
 
         xml_content = _extract_xml_content(content)
         data = xml_to_dict(xml_content)
@@ -190,7 +190,7 @@ def _convert_xml_to_list(content: str, list_type: Any, func_name: str) -> List[A
             if not isinstance(item_list, list):
                 item_list = [item_list]
         else:
-            raise ValueError(f"无法从 XML 中提取列表数据: {data}")
+            raise ValueError(f"Cannot extract list data from XML: {data}")
 
         # 获取列表元素的类型
         args = get_args(list_type)
@@ -219,7 +219,7 @@ def _convert_xml_to_list(content: str, list_type: Any, func_name: str) -> List[A
         return converted_list
     except Exception as exc:
         push_error(f"Parsing error details: {str(exc)}, content: {content[:200]}")
-        raise ValueError(f"无法解析为 List: {str(exc)}") from exc
+        raise ValueError(f"Cannot parse as List: {str(exc)}") from exc
 
 
 def _convert_xml_to_pydantic(content: str, model_class: Type, func_name: str) -> Any:
@@ -228,7 +228,7 @@ def _convert_xml_to_pydantic(content: str, model_class: Type, func_name: str) ->
 
     try:
         if not content.strip():
-            raise ValueError("收到空响应")
+            raise ValueError("Received empty response")
 
         xml_content = _extract_xml_content(content)
         data_dict = xml_to_dict(xml_content)
@@ -241,7 +241,7 @@ def _convert_xml_to_pydantic(content: str, model_class: Type, func_name: str) ->
         return dict_to_pydantic(data_dict, model_class)
     except Exception as exc:
         push_error(f"Parsing error details: {str(exc)}, content: {content[:200]}")
-        raise ValueError(f"无法解析为 Pydantic 模型: {str(exc)}") from exc
+        raise ValueError(f"Cannot parse as Pydantic model: {str(exc)}") from exc
 
 
 __all__ = [

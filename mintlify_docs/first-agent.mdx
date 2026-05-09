@@ -1,0 +1,149 @@
+---
+title: Build Your First Agent
+description: A tool-using agent with @llm_chat in 10 minutes
+---
+
+# Build Your First Agent
+
+This guide builds a simple agent that can use tools to answer questions. You'll see the full loop: user message → LLM reasoning → tool call → tool result → final response.
+
+## Define a Tool
+
+Tools are async functions decorated with `@tool`:
+
+```python
+from SimpleLLMFunc import tool
+
+
+@tool
+async def search_docs(query: str) -> str:
+    """
+    Search the documentation for relevant information.
+
+    Args:
+        query: The search query.
+
+    Returns:
+        Matching documentation excerpts.
+
+    Best Practices:
+        - Use specific, focused queries.
+        - Prefer exact terms over vague descriptions.
+    """
+    # In reality, this would search a vector store or API
+    if "install" in query.lower():
+        return "Install with: pip install SimpleLLMFunc"
+    return f"No results found for: {query}"
+```
+
+Key points:
+- Tools MUST be `async def`
+- The docstring becomes the tool's description for the LLM
+- `Best Practices` section is injected into the system prompt as usage guidance
+- Return type annotation tells the framework what to expect
+
+## Define the Agent
+
+```python
+from SimpleLLMFunc import OpenAICompatible, llm_chat
+
+models = OpenAICompatible.load_from_json_file("provider.json")
+llm = models["openrouter"]["openai/gpt-4o"]
+
+
+@llm_chat(llm_interface=llm, toolkit=[search_docs], stream=True)
+async def assistant(message: str, history: list | None = None):
+    """
+    You are a helpful documentation assistant.
+    Answer questions using the search tool when you need specific information.
+    Be concise and direct.
+    """
+    pass
+```
+
+Key points:
+- `@llm_chat` creates a multi-turn agent (vs `@llm_function` for single calls)
+- `toolkit=[...]` gives the agent access to tools
+- `stream=True` enables streaming responses
+- `history` parameter name is special — the framework manages conversation state through it
+- The docstring is the agent's system prompt
+
+## Run and Consume Events
+
+`@llm_chat` returns an async generator of `ReactOutput` — either response chunks or lifecycle events:
+
+```python
+import asyncio
+from SimpleLLMFunc.hooks import is_response_yield, is_event_yield
+
+
+async def main():
+    history = []
+
+    async for output in assistant("How do I install SimpleLLMFunc?", history):
+        if is_response_yield(output):
+            # Final response text
+            print(output.response, end="")
+            history = output.messages  # Updated history for next turn
+        elif is_event_yield(output):
+            # Lifecycle events (tool calls, LLM chunks, etc.)
+            event = output.event
+            # You can log, display, or react to events here
+
+    print()  # newline after streaming
+
+
+asyncio.run(main())
+```
+
+## What Happened Under the Hood
+
+```
+1. User message "How do I install SimpleLLMFunc?" → compiled into LLM request
+2. LLM decides to call search_docs(query="install SimpleLLMFunc")
+3. Framework executes tool, gets result
+4. Result added to context via ToolResultMutation
+5. Context re-compiled, sent back to LLM
+6. LLM generates final response using tool result
+7. Response streamed back as ReactOutput events
+```
+
+This is the **ReAct loop** — reason, act, observe, repeat. The framework handles all of it. You defined a function signature and a tool.
+
+## Add More Tools
+
+```python
+@tool
+async def calculate(expression: str) -> float:
+    """
+    Evaluate a mathematical expression.
+
+    Args:
+        expression: A Python math expression (e.g., "2 ** 10").
+
+    Returns:
+        The numeric result.
+
+    Best Practices:
+        - Use Python syntax for math operations.
+        - Keep expressions simple and readable.
+    """
+    return float(eval(expression))  # simplified for demo
+
+
+@llm_chat(llm_interface=llm, toolkit=[search_docs, calculate], stream=True)
+async def assistant(message: str, history: list | None = None):
+    """You are a helpful assistant that can search docs and do math."""
+    pass
+```
+
+## What's Next
+
+<CardGroup cols={2}>
+  <Card title="Multi-Turn Chat" icon="comments" href="/first-chat">
+    Manage longer conversations with history and streaming.
+  </Card>
+  <Card title="Why This Design?" icon="lightbulb" href="/philosophy/llm-is-function">
+    Understand why LLM calls are functions, not chains.
+  </Card>
+</CardGroup>
