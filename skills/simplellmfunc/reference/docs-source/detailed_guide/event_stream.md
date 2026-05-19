@@ -57,7 +57,7 @@ SimpleLLMFunc 遵循一个核心设计哲学：**Agent 本身是一个函数，�
 
 ### 基本用法
 
-在 `@llm_chat` 或 `@llm_function` 装饰器中设置 `enable_event=True` 即可启用事件流：
+`@llm_chat` 默认产生 `ReactOutput` 事件流；`@llm_function` 使用 `.stream(...)` 消费事件流：
 
 #### llm_chat 的事件流
 
@@ -71,7 +71,6 @@ from SimpleLLMFunc.hooks import ReactOutput, ResponseYield, EventYield
     llm_interface=llm,
     toolkit=[calculate, get_weather],
     stream=True,
-    enable_event=True,  # 🔑 启用事件流
 )
 async def chat(message: str, history=None):
     """智能助手"""
@@ -99,7 +98,6 @@ from SimpleLLMFunc.hooks import ReactOutput, ResponseYield, EventYield
 @llm_function(
     llm_interface=llm,
     toolkit=[calculate, get_weather],
-    enable_event=True,  # 🔑 启用事件流
 )
 async def analyze_text(text: str) -> str:
     """分析文本内容"""
@@ -121,14 +119,15 @@ async for output in analyze_text("Hello world"):
 
 启用事件流后，函数的返回值类型会发生变化：
 
-**llm_chat 默认模式** (`enable_event=False`):
+**llm_chat 输出**:
 
 ```python
-async for chunk, updated_history in chat("Hello"):
-    print(chunk)
+async for output in chat("Hello"):
+    if is_response_yield(output):
+        print(output.response)
 ```
 
-**llm_chat 事件流模式** (`enable_event=True`):
+**llm_chat 事件输出**:
 
 ```python
 async for output in chat("Hello"):
@@ -138,14 +137,14 @@ async for output in chat("Hello"):
         print(f"事件: {output.event.event_type}")
 ```
 
-**llm_function 默认模式** (`enable_event=False`):
+**llm_function 普通调用**:
 
 ```python
 result = await analyze_text("Hello")
 print(result)
 ```
 
-**llm_function 事件流模式** (`enable_event=True`):
+**llm_function 事件流调用**:
 
 ```python
 async for output in analyze_text("Hello"):
@@ -476,7 +475,6 @@ async def calculate(expression: str) -> str:
     llm_interface=llm,
     toolkit=[calculate],
     stream=True,
-    enable_event=True,
 )
 async def chat(message: str, history=None):
     """智能助手"""
@@ -574,7 +572,7 @@ async def log_event(event: ReActEvent):
     print(f"[{event.timestamp}] {event.event_type}: {event.func_name}")
 
 @with_event_observer(log_event)
-@llm_chat(llm_interface=llm, enable_event=True)
+@llm_chat(llm_interface=llm)
 async def observed_chat(message: str, history=None):
     """带事件观测的聊天"""
     pass
@@ -701,7 +699,7 @@ def with_state_monitoring(chat_func):
     return wrapper
 
 # 使用
-@llm_chat(llm_interface=llm, enable_event=True)
+@llm_chat(llm_interface=llm)
 async def chat(message: str, history=None):
     """智能助手"""
     pass
@@ -783,7 +781,7 @@ def with_context_compression(
     return wrapper
 
 # 使用
-@llm_chat(llm_interface=llm, enable_event=True)
+@llm_chat(llm_interface=llm)
 async def chat(message: str, history=None):
     """智能助手"""
     pass
@@ -842,7 +840,7 @@ def with_state_persistence(chat_func, state_file: str = "chat_state.json"):
     return wrapper
 
 # 使用
-@llm_chat(llm_interface=llm, enable_event=True)
+@llm_chat(llm_interface=llm)
 async def chat(message: str, history=None):
     """智能助手"""
     pass
@@ -862,7 +860,7 @@ async for output in persistent_chat("Hello"):
 
 ```python
 # 组合多个 wrapper
-@llm_chat(llm_interface=llm, enable_event=True)
+@llm_chat(llm_interface=llm)
 async def chat(message: str, history=None):
     """智能助手"""
     pass
@@ -888,7 +886,7 @@ async for output in enhanced_chat("Hello"):
 
 ```python
 # 启用事件流但只处理响应
-@llm_chat(llm_interface=llm, enable_event=True)
+@llm_chat(llm_interface=llm)
 async def chat(message: str, history=None):
     pass
 
@@ -923,7 +921,7 @@ abort_signal.abort("user_interrupt")
 
 ### Q: 事件流会影响性能吗？
 
-A: 事件流本身是轻量级的，不会显著影响性能。事件处理是异步的，不会阻塞主流程。如果你担心性能，可以在生产环境中禁用事件流（`enable_event=False`）。
+A: 事件流本身是轻量级的，不会显著影响性能。事件处理是异步的，不会阻塞主流程。如需降低 UI/日志开销，可减少事件消费者侧处理。
 
 ### Q: 如何只监听特定类型的事件？
 
@@ -943,7 +941,7 @@ async for event in filter_events(
 A:
 
 - **流式响应** (`stream=True`)：控制 LLM 是否以流式方式返回响应
-- **事件流** (`enable_event=True`)：控制是否产生事件，用于观察执行过程
+- **事件流**：`llm_chat` 调用和 `llm_function.stream(...)` 产生 `ReactOutput`，用于观察执行过程
 
 两者可以独立使用，也可以同时启用。
 
@@ -963,7 +961,7 @@ A: 由于 Agent 是无状态的，所有状态都通过 `history` 参数传递�
 
 ### Q: llm_function 支持事件流吗？
 
-A: 是的！`@llm_function` 也执行 ReAct 循环，从 v0.5.0+ 开始完全支持事件流。当 `enable_event=True` 时，`@llm_function` 返回一个生成器，yield 事件和最终响应。
+A: 是的！`@llm_function` 也执行 ReAct 循环，从 v0.5.0+ 开始完全支持事件流。使用 `your_function.stream(...)` 时会返回一个生成器，yield 事件和最终响应。
 
 **重要区别**：`@llm_function` 的 `ResponseYield.response` 包含的是**解析后的结果**（`str`、Pydantic 对象等），而不是原始的 `ChatCompletion` 对象。这符合 `llm_function` 的设计理念：将 LLM 响应转换为指定的返回类型。
 
@@ -973,7 +971,7 @@ A: 是的！`@llm_function` 也执行 ReAct 循环，从 v0.5.0+ 开始完全支
 from SimpleLLMFunc import llm_function
 from SimpleLLMFunc.hooks.stream import is_response_yield
 
-@llm_function(llm_interface=llm, enable_event=True)
+@llm_function(llm_interface=llm)
 async def summarize(text: str) -> str:
     """生成摘要"""
     pass

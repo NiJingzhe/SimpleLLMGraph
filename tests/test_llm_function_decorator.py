@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import contextvars
 import inspect
-from typing import Any, AsyncGenerator, Optional
+from typing import Any, Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from SimpleLLMFunc import llm_function
-from SimpleLLMFunc.hooks.stream import ReactOutput, ResponseYield
+from SimpleLLMFunc import LLMFunction, llm_function
+from SimpleLLMFunc.hooks.stream import ResponseYield
 from SimpleLLMFunc.observability.langfuse_client import (
     langfuse_client as shared_langfuse_client,
 )
@@ -157,31 +157,27 @@ def test_llm_function_default_max_tool_calls_is_none() -> None:
 
 
 @pytest.mark.asyncio
-async def test_llm_function_passes_none_max_tool_calls_to_execute_react_loop() -> None:
+async def test_llm_function_passes_none_max_tool_calls_to_react_loop() -> None:
     """llm_function should forward the unbounded default into ReAct orchestration."""
 
     captured: dict[str, Any] = {}
     raw_response = object()
 
-    async def fake_execute_react_loop(*args: Any, **kwargs: Any):
+    async def fake_react_loop(*args: Any, **kwargs: Any):
         _ = args
         captured["max_tool_calls"] = kwargs.get("max_tool_calls")
-
-        async def _stream() -> AsyncGenerator[ReactOutput, None]:
-            yield ResponseYield(type="response", response=raw_response, messages=[])
-
-        return _stream()
+        yield ResponseYield(type="response", response=raw_response, messages=[])
 
     mock_llm = MagicMock()
     mock_llm.model_name = "test-model"
 
     with (
         patch(
-            "SimpleLLMFunc.llm_decorator.llm_function_decorator.execute_react_loop",
-            new=fake_execute_react_loop,
+            "SimpleLLMFunc.llm_decorator.llm_function_decorator.ReAct_loop",
+            new=fake_react_loop,
         ),
         patch(
-            "SimpleLLMFunc.llm_decorator.llm_function_decorator.parse_and_validate_response",
+            "SimpleLLMFunc.llm_decorator.llm_function_decorator.process_response",
             return_value="parsed-result",
         ) as mock_parse,
         patch(
@@ -198,11 +194,10 @@ async def test_llm_function_passes_none_max_tool_calls_to_execute_react_loop() -
 
     assert captured["max_tool_calls"] is None
     assert result == "parsed-result"
-    mock_parse.assert_called_once_with(
-        response=raw_response,
-        return_type=str,
-        func_name="summarize",
-    )
+    assert isinstance(summarize, LLMFunction)
+    assert inspect.iscoroutinefunction(summarize)
+    assert inspect.signature(summarize) == inspect.signature(summarize.__wrapped__)
+    mock_parse.assert_called_once_with(raw_response, str)
 
 
 @pytest.mark.asyncio
@@ -210,24 +205,20 @@ async def test_llm_function_sets_explicit_langfuse_trace_name() -> None:
     tracker = _TrackingLangfuseClient()
     raw_response = object()
 
-    async def fake_execute_react_loop(*args: Any, **kwargs: Any):
+    async def fake_react_loop(*args: Any, **kwargs: Any):
         _ = args, kwargs
-
-        async def _stream() -> AsyncGenerator[ReactOutput, None]:
-            yield ResponseYield(type="response", response=raw_response, messages=[])
-
-        return _stream()
+        yield ResponseYield(type="response", response=raw_response, messages=[])
 
     mock_llm = MagicMock()
     mock_llm.model_name = "test-model"
 
     with (
         patch(
-            "SimpleLLMFunc.llm_decorator.llm_function_decorator.execute_react_loop",
-            new=fake_execute_react_loop,
+            "SimpleLLMFunc.llm_decorator.llm_function_decorator.ReAct_loop",
+            new=fake_react_loop,
         ),
         patch(
-            "SimpleLLMFunc.llm_decorator.llm_function_decorator.parse_and_validate_response",
+            "SimpleLLMFunc.llm_decorator.llm_function_decorator.process_response",
             return_value="parsed-result",
         ),
         patch.object(
@@ -267,28 +258,24 @@ async def test_llm_function_propagates_trace_name_to_child_observations() -> Non
     tracker = _TrackingLangfuseClient()
     raw_response = object()
 
-    async def fake_execute_react_loop(*args: Any, **kwargs: Any):
+    async def fake_react_loop(*args: Any, **kwargs: Any):
         _ = args, kwargs
         with tracker.start_as_current_observation(
             as_type="generation",
             name="downstream_generation",
         ):
-
-            async def _stream() -> AsyncGenerator[ReactOutput, None]:
-                yield ResponseYield(type="response", response=raw_response, messages=[])
-
-            return _stream()
+            yield ResponseYield(type="response", response=raw_response, messages=[])
 
     mock_llm = MagicMock()
     mock_llm.model_name = "test-model"
 
     with (
         patch(
-            "SimpleLLMFunc.llm_decorator.llm_function_decorator.execute_react_loop",
-            new=fake_execute_react_loop,
+            "SimpleLLMFunc.llm_decorator.llm_function_decorator.ReAct_loop",
+            new=fake_react_loop,
         ),
         patch(
-            "SimpleLLMFunc.llm_decorator.llm_function_decorator.parse_and_validate_response",
+            "SimpleLLMFunc.llm_decorator.llm_function_decorator.process_response",
             return_value="parsed-result",
         ),
         patch.object(

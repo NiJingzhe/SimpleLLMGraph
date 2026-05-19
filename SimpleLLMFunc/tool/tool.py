@@ -306,7 +306,7 @@ class Tool(ABC):
                         with open(temp_file, "w", encoding="utf-8") as f:
                             f.write(result)
                     except Exception as e:
-                        push_error(f"保存工具结果到临时文件失败: {e}")
+                        push_error(f"Failed to save tool result to temporary file: {e}")
                         # 如果保存失败，直接返回原始结果
                         return result
 
@@ -492,11 +492,11 @@ class Tool(ABC):
             ]
         except AttributeError as e:
             push_error(
-                f"传入的工具列表中可能存在非 Tool 类型对象或者没有被 @tool 装饰的函数，序列化发生错误: {e}"
+                f"Tool serialization failed: the provided list may contain non-Tool objects or functions not decorated with @tool: {e}"
             )
             raise AttributeError(e)
         except Exception as e:
-            push_error(f"序列化过程中发生未知错误: {e}")
+            push_error(f"Unknown error during tool serialization: {e}")
             raise Exception(e)
 
         return result

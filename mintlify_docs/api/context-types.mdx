@@ -1,0 +1,319 @@
+---
+title: Context Types
+description: "API reference for ContextState, CompileSource, all 10 ContextMutation types, and compiled outputs"
+---
+
+# Context Types API Reference
+
+## ContextState
+
+```python
+from SimpleLLMFunc.base.types import ContextState
+```
+
+Runtime representation of conversation state.
+
+```python
+@dataclass
+class ContextState:
+    messages: NormalizedMessageList
+    data_from_selfref: Optional[DataFromSelfRef] = None
+    pending_mutations: List[ContextMutation] = field(default_factory=list)
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `messages` | `NormalizedMessageList` | Current conversation transcript |
+| `data_from_selfref` | `DataFromSelfRef \| None` | Durable self-reference state |
+| `pending_mutations` | `List[ContextMutation]` | Changes waiting for next compile boundary |
+
+---
+
+## CompileSource
+
+```python
+from SimpleLLMFunc.base.types import CompileSource
+```
+
+Input boundary for compilation.
+
+```python
+@dataclass(frozen=True)
+class CompileSource:
+    data_from_agent_config: DataFromAgentConfig
+    data_from_selfref: Optional[DataFromSelfRef]
+    input_messages: NormalizedMessageList
+```
+
+---
+
+## DataFromAgentConfig
+
+```python
+from SimpleLLMFunc.base.types import DataFromAgentConfig
+```
+
+Static configuration from the decorator.
+
+```python
+@dataclass(frozen=True)
+class DataFromAgentConfig:
+    base_system_prompt: str
+    template_params: Optional[Dict[str, Any]] = None
+    tool_prompt_specs: List[Dict[str, Any]] = field(default_factory=list)
+    include_must_principles: bool = False
+```
+
+| Field | Description |
+|-------|-------------|
+| `base_system_prompt` | Docstring content (may contain `{placeholders}`) |
+| `template_params` | Values for placeholder substitution |
+| `tool_prompt_specs` | Tool best-practice specs for system prompt injection |
+| `include_must_principles` | Whether to append structured-call rules |
+
+---
+
+## DataFromSelfRef
+
+```python
+from SimpleLLMFunc.base.types import DataFromSelfRef
+```
+
+Durable state from the SelfReference backend.
+
+```python
+@dataclass(frozen=True)
+class DataFromSelfRef:
+    base_system_prompt: str
+    experiences: List[Dict[str, str]] = field(default_factory=list)
+    summary: Optional[Dict[str, Any]] = None
+    summary_message: Optional[Dict[str, Any]] = None
+    working_messages: NormalizedMessageList = field(default_factory=list)
+```
+
+| Field | Description |
+|-------|-------------|
+| `base_system_prompt` | System prompt with selfref markers |
+| `experiences` | `[{id: str, text: str}, ...]` — durable remembered facts |
+| `summary` | Compaction metadata |
+| `summary_message` | The summary as a displayable message |
+| `working_messages` | Post-compaction working transcript |
+
+---
+
+## ContextMutation (Union)
+
+```python
+from SimpleLLMFunc.base.types import ContextMutation
+```
+
+```python
+ContextMutation = Union[
+    AssistantMessageMutation,
+    ToolResultMutation,
+    MultimodalToolResultMutation,
+    UserMessageMutation,
+    ContextReplaceMutation,
+    ContextSummaryMutation,
+    ExperienceRememberMutation,
+    ExperienceForgetMutation,
+    AssistantTruncatedMutation,
+    ToolCancelledMutation,
+]
+```
+
+### AssistantMessageMutation
+
+```python
+@dataclass
+class AssistantMessageMutation:
+    role: Literal["assistant"] = "assistant"
+    content: Optional[str] = None
+    tool_calls: List[Dict[str, Any]] = field(default_factory=list)
+    reasoning_details: List[Dict[str, Any]] = field(default_factory=list)
+```
+
+### ToolResultMutation
+
+```python
+@dataclass
+class ToolResultMutation:
+    tool_call_id: str
+    content: str
+    role: Literal["tool"] = "tool"
+```
+
+### MultimodalToolResultMutation
+
+```python
+@dataclass
+class MultimodalToolResultMutation:
+    tool_call_id: str
+    tool_name: str
+    arguments: str
+    user_messages: List[Dict[str, Any]]
+```
+
+### UserMessageMutation
+
+```python
+@dataclass
+class UserMessageMutation:
+    message: Dict[str, Any]
+```
+
+### ContextReplaceMutation
+
+```python
+@dataclass
+class ContextReplaceMutation:
+    messages: List[Dict[str, Any]]
+```
+
+### ContextSummaryMutation
+
+```python
+@dataclass
+class ContextSummaryMutation:
+    summary_message: Dict[str, Any]
+    remember: List[Dict[str, str]] = field(default_factory=list)
+```
+
+### ExperienceRememberMutation
+
+```python
+@dataclass
+class ExperienceRememberMutation:
+    text: str
+```
+
+### ExperienceForgetMutation
+
+```python
+@dataclass
+class ExperienceForgetMutation:
+    experience_id: str
+```
+
+### AssistantTruncatedMutation
+
+```python
+@dataclass
+class AssistantTruncatedMutation:
+    partial_content: str
+    abort_reason: str = ""
+```
+
+### ToolCancelledMutation
+
+```python
+@dataclass
+class ToolCancelledMutation:
+    tool_call_id: str
+    tool_name: str
+    abort_reason: str = ""
+```
+
+---
+
+## Compiled Outputs
+
+### ReducedTurnContext
+
+```python
+from SimpleLLMFunc.base.types import ReducedTurnContext
+```
+
+Output of Stage 1 (mutation application):
+
+```python
+@dataclass
+class ReducedTurnContext:
+    transcript: NormalizedMessageList
+    selfref_snapshot: Optional[DataFromSelfRef] = None
+```
+
+### CompiledTurnContext
+
+```python
+from SimpleLLMFunc.base.types import CompiledTurnContext
+```
+
+Output of the full pipeline (ready for LLM):
+
+```python
+@dataclass
+class CompiledTurnContext:
+    transcript: NormalizedMessageList
+    system_prompt: Optional[str]
+    llm_messages: NormalizedMessageList
+    selfref_snapshot: Optional[DataFromSelfRef] = None
+```
+
+| Field | Description |
+|-------|-------------|
+| `transcript` | Messages after system prompt resolution |
+| `system_prompt` | The resolved system prompt text |
+| `llm_messages` | Final messages for the provider (with tool specs injected) |
+| `selfref_snapshot` | Carried-forward selfref state |
+
+### CompiledContext
+
+```python
+from SimpleLLMFunc.base.types import CompiledContext
+```
+
+Intermediate compiled state (before LLM rendering):
+
+```python
+@dataclass
+class CompiledContext:
+    messages: NormalizedMessageList
+    data_from_selfref: Optional[DataFromSelfRef] = None
+```
+
+---
+
+## Pipeline Functions
+
+### compile_invocation_turn
+
+```python
+from SimpleLLMFunc.base.compile_pipeline import compile_invocation_turn
+
+def compile_invocation_turn(
+    spec: InvocationSpec,
+    transcript: NormalizedMessageList,
+    pending_mutations: Optional[List[ContextMutation]] = None,
+    selfref_snapshot: Optional[DataFromSelfRef] = None,
+) -> CompiledTurnContext:
+```
+
+Single entry point for the full compile pipeline.
+
+### reduce_turn_context
+
+```python
+from SimpleLLMFunc.base.compile_pipeline import reduce_turn_context
+
+def reduce_turn_context(
+    transcript: NormalizedMessageList,
+    pending_mutations: List[ContextMutation],
+    selfref_snapshot: Optional[DataFromSelfRef] = None,
+) -> ReducedTurnContext:
+```
+
+Stage 1 only: apply mutations, refresh selfref snapshot.
+
+### convert_to_llm_request
+
+```python
+from SimpleLLMFunc.base.compile_pipeline import convert_to_llm_request
+
+def convert_to_llm_request(
+    reduced: ReducedTurnContext,
+    prompt_contract: PromptContract,
+) -> CompiledTurnContext:
+```
+
+Stage 2: resolve system prompt, render final messages.

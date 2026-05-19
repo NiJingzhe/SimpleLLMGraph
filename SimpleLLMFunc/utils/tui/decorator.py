@@ -7,7 +7,7 @@ from functools import wraps
 from typing import Any, AsyncGenerator, Callable, Optional, Sequence
 
 from SimpleLLMFunc.hooks.stream import ReactOutput
-from SimpleLLMFunc.llm_decorator.steps.chat.message import HISTORY_PARAM_NAMES
+from SimpleLLMFunc.llm_decorator.prompt_contract import HISTORY_PARAM_NAMES
 from SimpleLLMFunc.type.message import MessageList
 from SimpleLLMFunc.utils.tui.hooks import ToolCustomEventHook
 

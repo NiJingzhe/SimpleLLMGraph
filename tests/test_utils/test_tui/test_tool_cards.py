@@ -9,6 +9,7 @@ from SimpleLLMFunc.utils.tui.tool_cards.file_tools import (
     EchoIntoToolCallCard,
     GrepToolCallCard,
     ReadFileToolCallCard,
+    ReadImageToolCallCard,
     SedToolCallCard,
 )
 
@@ -25,6 +26,11 @@ def test_factory_returns_builtin_specialized_cards() -> None:
         tool_call_id="call-2",
         model_call_id="llm-1",
         tool_name="read_file",
+    )
+    read_image_card = build_tool_call_card(
+        tool_call_id="call-2b",
+        model_call_id="llm-1",
+        tool_name="read_image",
     )
     grep_card = build_tool_call_card(
         tool_call_id="call-3",
@@ -49,6 +55,7 @@ def test_factory_returns_builtin_specialized_cards() -> None:
 
     assert isinstance(execute_card, ExecuteCodeToolCallCard)
     assert isinstance(read_card, ReadFileToolCallCard)
+    assert isinstance(read_image_card, ReadImageToolCallCard)
     assert isinstance(grep_card, GrepToolCallCard)
     assert isinstance(sed_card, SedToolCallCard)
     assert isinstance(echo_card, EchoIntoToolCallCard)
@@ -91,6 +98,83 @@ def test_read_file_card_groups_path_and_line_range() -> None:
     assert "`src/main.py`" in card.arguments_markdown
     assert "## Line Range" in card.arguments_markdown
     assert "10-20" in card.arguments_markdown
+
+
+def test_read_file_card_hides_successful_result_body() -> None:
+    """read_file should not dump file contents again in the result area."""
+
+    card = ReadFileToolCallCard(
+        tool_call_id="call-2",
+        model_call_id="llm-1",
+        tool_name="read_file",
+        arguments={"path": "src/main.py"},
+    )
+    card.set_result_markdown(
+        "This is file src/main.py from line 1 to line 2, we have shown the line number "
+        "as `<lineno> |` at the beginning of each line:\n```python\n1 | a\n2 | b\n```"
+    )
+
+    assert card.build_result_markdown() == ""
+
+
+def test_read_file_card_keeps_error_result_visible() -> None:
+    """read_file should still show validation or lookup errors."""
+
+    card = ReadFileToolCallCard(
+        tool_call_id="call-2b",
+        model_call_id="llm-1",
+        tool_name="read_file",
+        arguments={"path": "missing.py"},
+    )
+    card.set_result_markdown("file does not exist")
+
+    assert card.build_result_markdown() == "file does not exist"
+
+
+def test_grep_card_summarizes_match_count() -> None:
+    """grep should show only the total number of matches in results."""
+
+    card = GrepToolCallCard(
+        tool_call_id="call-3",
+        model_call_id="llm-1",
+        tool_name="grep",
+        arguments={"pattern": "needle", "path_pattern": ".*\\.py$"},
+    )
+    card.set_result_markdown(
+        "alpha.py:2 | needle here\nbeta.py:5 | another needle\n"
+        "You are recommended to use read_file to check more detailed context by "
+        "reading about 10 lines around these positions."
+    )
+
+    assert card.build_result_markdown() == "2 matches"
+
+
+def test_grep_card_summarizes_zero_matches() -> None:
+    """grep no-match result should collapse to a zero-match summary."""
+
+    card = GrepToolCallCard(
+        tool_call_id="call-4",
+        model_call_id="llm-1",
+        tool_name="grep",
+        arguments={"pattern": "needle", "path_pattern": ".*\\.py$"},
+    )
+    card.set_result_markdown("Nothing matched provided pattern.")
+
+    assert card.build_result_markdown() == "0 matches"
+
+
+def test_grep_card_keeps_validation_error_visible() -> None:
+    """grep validation failures should remain visible to the user."""
+
+    card = GrepToolCallCard(
+        tool_call_id="call-5",
+        model_call_id="llm-1",
+        tool_name="grep",
+        arguments={"pattern": "[", "path_pattern": ".*\\.py$"},
+    )
+    card.set_result_markdown("invalid pattern regex: unterminated character set")
+
+    assert card.build_result_markdown() == "invalid pattern regex: unterminated character set"
 
 
 def test_sed_card_renders_diff_like_edit_preview() -> None:

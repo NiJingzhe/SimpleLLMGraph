@@ -30,7 +30,7 @@
 
 **文件**: [examples/llm_function_event_pydantic.py](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/examples/llm_function_event_pydantic.py)
 
-展示 `@llm_function(enable_event=True)` 的事件流与结构化输出协同：
+展示 `@llm_function(...).stream(...)` 的事件流与结构化输出协同：
 - 捕获 LLM 调用事件
 - 观察执行统计
 - 处理最终结构化结果
@@ -64,7 +64,6 @@ from SimpleLLMFunc.hooks import (
     llm_interface=llm,
     toolkit=[calculate, get_weather, search_knowledge],
     stream=True,
-    enable_event=True,  # 🔑 启用事件流
 )
 async def chat(user_message: str, chat_history: List[Dict[str, str]] = None):
     """智能助手"""
@@ -117,7 +116,7 @@ python examples/event_stream_chatbot.py
 
 ```python
 @tui(custom_event_hook=[my_hook])
-@llm_chat(..., stream=True, enable_event=True)
+@llm_chat(..., stream=True)
 async def agent(message: str, history=None):
     ...
 
@@ -176,7 +175,7 @@ poetry run python examples/tui_general_agent_example.py
 - `@tool` 外层 + `@llm_function` 内层，将 child agent 暴露进 `toolkit`
 - parent `@llm_chat` 作为 supervisor，负责路由和最终答复
 - child agent 保持独立 prompt / 职责边界，适合 reviewer / planner / router 组合
-- 当前推荐子 agent 使用 `@llm_function(enable_event=False)`；若要复用 `@llm_chat`，通常需要先手写一层 wrapper tool
+- 当前推荐子 agent 使用普通 `await @llm_function` 调用；若要复用 `@llm_chat`，通常需要先手写一层 adapter tool 消费其 `ReactOutput`
 
 Run:
 
@@ -205,7 +204,6 @@ from SimpleLLMFunc.hooks.stream import is_response_yield
 
 @llm_function(
     llm_interface=llm,
-    enable_event=True,  # 🔑 启用事件流
 )
 async def summarize_text(text: str) -> str:
     """将给定的文本进行简洁的摘要"""
@@ -304,7 +302,7 @@ poetry run python examples/llm_function_token_usage.py
 - **事件流聊天**: 见 [event_stream_chatbot.py](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/examples/event_stream_chatbot.py)
 - **自定义工具事件**: 见 [custom_tool_event_example.py](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/examples/custom_tool_event_example.py)
 - **终端 TUI 聊天**: 见 [tui_chat_example.py](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/examples/tui_chat_example.py)
-- **事件流观测**: 见 [event_stream_chatbot.py](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/examples/event_stream_chatbot.py) ⭐ 使用 `enable_event=True` 实时观察 ReAct 循环执行过程
+- **事件流观测**: 见 [event_stream_chatbot.py](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/examples/event_stream_chatbot.py) ⭐ 通过 `ReactOutput` 实时观察 ReAct 循环执行过程
 
 ### 多模态处理
 - **图片分析**: 见 [multi_modality_toolcall.py](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/examples/multi_modality_toolcall.py)

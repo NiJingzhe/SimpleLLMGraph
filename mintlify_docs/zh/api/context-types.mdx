@@ -1,0 +1,319 @@
+---
+title: 上下文类型
+description: "ContextState、CompileSource、全部 10 种 ContextMutation 类型及编译输出的 API 参考"
+---
+
+# 上下文类型 API 参考
+
+## ContextState
+
+```python
+from SimpleLLMFunc.base.types import ContextState
+```
+
+对话状态的运行时表示。
+
+```python
+@dataclass
+class ContextState:
+    messages: NormalizedMessageList
+    data_from_selfref: Optional[DataFromSelfRef] = None
+    pending_mutations: List[ContextMutation] = field(default_factory=list)
+```
+
+| 字段 | 类型 | 描述 |
+|------|------|------|
+| `messages` | `NormalizedMessageList` | 当前对话记录 |
+| `data_from_selfref` | `DataFromSelfRef \| None` | 持久化的自引用（SelfReference）状态 |
+| `pending_mutations` | `List[ContextMutation]` | 等待下一个编译边界的变更 |
+
+---
+
+## CompileSource
+
+```python
+from SimpleLLMFunc.base.types import CompileSource
+```
+
+编译的输入边界。
+
+```python
+@dataclass(frozen=True)
+class CompileSource:
+    data_from_agent_config: DataFromAgentConfig
+    data_from_selfref: Optional[DataFromSelfRef]
+    input_messages: NormalizedMessageList
+```
+
+---
+
+## DataFromAgentConfig
+
+```python
+from SimpleLLMFunc.base.types import DataFromAgentConfig
+```
+
+来自装饰器的静态配置。
+
+```python
+@dataclass(frozen=True)
+class DataFromAgentConfig:
+    base_system_prompt: str
+    template_params: Optional[Dict[str, Any]] = None
+    tool_prompt_specs: List[Dict[str, Any]] = field(default_factory=list)
+    include_must_principles: bool = False
+```
+
+| 字段 | 描述 |
+|------|------|
+| `base_system_prompt` | 文档字符串内容（可能包含 `{占位符}`） |
+| `template_params` | 用于占位符替换的值 |
+| `tool_prompt_specs` | 用于系统提示词注入的工具最佳实践规格 |
+| `include_must_principles` | 是否追加结构化调用规则 |
+
+---
+
+## DataFromSelfRef
+
+```python
+from SimpleLLMFunc.base.types import DataFromSelfRef
+```
+
+来自 SelfReference 后端的持久化状态。
+
+```python
+@dataclass(frozen=True)
+class DataFromSelfRef:
+    base_system_prompt: str
+    experiences: List[Dict[str, str]] = field(default_factory=list)
+    summary: Optional[Dict[str, Any]] = None
+    summary_message: Optional[Dict[str, Any]] = None
+    working_messages: NormalizedMessageList = field(default_factory=list)
+```
+
+| 字段 | 描述 |
+|------|------|
+| `base_system_prompt` | 带有自引用标记的系统提示词 |
+| `experiences` | `[{id: str, text: str}, ...]` — 持久化的记忆事实 |
+| `summary` | 压缩元数据 |
+| `summary_message` | 可展示的摘要消息 |
+| `working_messages` | 压缩后的工作对话记录 |
+
+---
+
+## ContextMutation (Union)
+
+```python
+from SimpleLLMFunc.base.types import ContextMutation
+```
+
+```python
+ContextMutation = Union[
+    AssistantMessageMutation,
+    ToolResultMutation,
+    MultimodalToolResultMutation,
+    UserMessageMutation,
+    ContextReplaceMutation,
+    ContextSummaryMutation,
+    ExperienceRememberMutation,
+    ExperienceForgetMutation,
+    AssistantTruncatedMutation,
+    ToolCancelledMutation,
+]
+```
+
+### AssistantMessageMutation
+
+```python
+@dataclass
+class AssistantMessageMutation:
+    role: Literal["assistant"] = "assistant"
+    content: Optional[str] = None
+    tool_calls: List[Dict[str, Any]] = field(default_factory=list)
+    reasoning_details: List[Dict[str, Any]] = field(default_factory=list)
+```
+
+### ToolResultMutation
+
+```python
+@dataclass
+class ToolResultMutation:
+    tool_call_id: str
+    content: str
+    role: Literal["tool"] = "tool"
+```
+
+### MultimodalToolResultMutation
+
+```python
+@dataclass
+class MultimodalToolResultMutation:
+    tool_call_id: str
+    tool_name: str
+    arguments: str
+    user_messages: List[Dict[str, Any]]
+```
+
+### UserMessageMutation
+
+```python
+@dataclass
+class UserMessageMutation:
+    message: Dict[str, Any]
+```
+
+### ContextReplaceMutation
+
+```python
+@dataclass
+class ContextReplaceMutation:
+    messages: List[Dict[str, Any]]
+```
+
+### ContextSummaryMutation
+
+```python
+@dataclass
+class ContextSummaryMutation:
+    summary_message: Dict[str, Any]
+    remember: List[Dict[str, str]] = field(default_factory=list)
+```
+
+### ExperienceRememberMutation
+
+```python
+@dataclass
+class ExperienceRememberMutation:
+    text: str
+```
+
+### ExperienceForgetMutation
+
+```python
+@dataclass
+class ExperienceForgetMutation:
+    experience_id: str
+```
+
+### AssistantTruncatedMutation
+
+```python
+@dataclass
+class AssistantTruncatedMutation:
+    partial_content: str
+    abort_reason: str = ""
+```
+
+### ToolCancelledMutation
+
+```python
+@dataclass
+class ToolCancelledMutation:
+    tool_call_id: str
+    tool_name: str
+    abort_reason: str = ""
+```
+
+---
+
+## 编译输出
+
+### ReducedTurnContext
+
+```python
+from SimpleLLMFunc.base.types import ReducedTurnContext
+```
+
+阶段 1（变更应用）的输出：
+
+```python
+@dataclass
+class ReducedTurnContext:
+    transcript: NormalizedMessageList
+    selfref_snapshot: Optional[DataFromSelfRef] = None
+```
+
+### CompiledTurnContext
+
+```python
+from SimpleLLMFunc.base.types import CompiledTurnContext
+```
+
+完整流水线的输出（已准备好发送给 LLM）：
+
+```python
+@dataclass
+class CompiledTurnContext:
+    transcript: NormalizedMessageList
+    system_prompt: Optional[str]
+    llm_messages: NormalizedMessageList
+    selfref_snapshot: Optional[DataFromSelfRef] = None
+```
+
+| 字段 | 描述 |
+|------|------|
+| `transcript` | 系统提示词解析后的消息列表 |
+| `system_prompt` | 已解析的系统提示词文本 |
+| `llm_messages` | 发送给提供商的最终消息（已注入工具规格） |
+| `selfref_snapshot` | 向前传递的自引用状态 |
+
+### CompiledContext
+
+```python
+from SimpleLLMFunc.base.types import CompiledContext
+```
+
+中间编译状态（在 LLM 渲染之前）：
+
+```python
+@dataclass
+class CompiledContext:
+    messages: NormalizedMessageList
+    data_from_selfref: Optional[DataFromSelfRef] = None
+```
+
+---
+
+## 流水线函数
+
+### compile_invocation_turn
+
+```python
+from SimpleLLMFunc.base.compile_pipeline import compile_invocation_turn
+
+def compile_invocation_turn(
+    spec: InvocationSpec,
+    transcript: NormalizedMessageList,
+    pending_mutations: Optional[List[ContextMutation]] = None,
+    selfref_snapshot: Optional[DataFromSelfRef] = None,
+) -> CompiledTurnContext:
+```
+
+完整编译流水线的单一入口点。
+
+### reduce_turn_context
+
+```python
+from SimpleLLMFunc.base.compile_pipeline import reduce_turn_context
+
+def reduce_turn_context(
+    transcript: NormalizedMessageList,
+    pending_mutations: List[ContextMutation],
+    selfref_snapshot: Optional[DataFromSelfRef] = None,
+) -> ReducedTurnContext:
+```
+
+仅阶段 1：应用变更，刷新自引用快照。
+
+### convert_to_llm_request
+
+```python
+from SimpleLLMFunc.base.compile_pipeline import convert_to_llm_request
+
+def convert_to_llm_request(
+    reduced: ReducedTurnContext,
+    prompt_contract: PromptContract,
+) -> CompiledTurnContext:
+```
+
+阶段 2：解析系统提示词，渲染最终消息。

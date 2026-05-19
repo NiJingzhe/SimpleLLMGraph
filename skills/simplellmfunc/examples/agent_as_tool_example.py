@@ -22,6 +22,7 @@ import asyncio
 import os
 
 from SimpleLLMFunc import OpenAICompatible, llm_chat, llm_function, tool
+from SimpleLLMFunc.hooks.stream import is_response_yield
 from SimpleLLMFunc.type import HistoryList
 
 
@@ -91,10 +92,10 @@ async def main() -> None:
     print(f"User: {query}")
     print("Assistant: ", end="", flush=True)
 
-    async for chunk, updated_history in supervisor(query, history):
-        if chunk:
-            print(chunk, end="", flush=True)
-        history = updated_history
+    async for output in supervisor(query, history):
+        if is_response_yield(output):
+            print(output.response, end="", flush=True)
+            history = output.messages
 
     print()
 

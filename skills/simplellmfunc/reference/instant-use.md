@@ -139,12 +139,12 @@ async def shell_agent(message: str, history=None):
 
 
 async def run() -> None:
-    async for chunk, _history in shell_agent(
+    async for output in shell_agent(
         "Read README.md and give me a 5-bullet summary.",
         [],
     ):
-        if chunk:
-            print(chunk, end="", flush=True)
+        if is_response_yield(output):
+            print(output.response, end="", flush=True)
     print()
 
 

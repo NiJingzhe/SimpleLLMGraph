@@ -11,6 +11,7 @@ from SimpleLLMFunc.utils.tui.tool_cards.file_tools import (
     EchoIntoToolCallCard,
     GrepToolCallCard,
     ReadFileToolCallCard,
+    ReadImageToolCallCard,
     SedToolCallCard,
 )
 
@@ -18,6 +19,7 @@ from SimpleLLMFunc.utils.tui.tool_cards.file_tools import (
 _CARD_TYPES = {
     "execute_code": ExecuteCodeToolCallCard,
     "read_file": ReadFileToolCallCard,
+    "read_image": ReadImageToolCallCard,
     "grep": GrepToolCallCard,
     "sed": SedToolCallCard,
     "echo_into": EchoIntoToolCallCard,

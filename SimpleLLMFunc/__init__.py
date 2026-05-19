@@ -18,6 +18,6 @@ from SimpleLLMFunc.tool import *
 from SimpleLLMFunc.interface import *
 from SimpleLLMFunc.observability import *
 from SimpleLLMFunc.runtime import *
-from SimpleLLMFunc.base.ReAct import execute_single_llm_call
-from SimpleLLMFunc.runtime.selfref import SelfReference
-from SimpleLLMFunc.utils.tui import tui
+from SimpleLLMFunc.base.react_loop import execute_single_llm_call as execute_single_llm_call
+from SimpleLLMFunc.runtime.selfref import SelfReference as SelfReference
+from SimpleLLMFunc.utils.tui import tui as tui

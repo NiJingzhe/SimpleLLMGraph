@@ -19,7 +19,7 @@ This means the framework handles prompt construction, ReAct loops, parsing, logg
 | External capability callable by the model | `@tool` | Search, math, file IO, API access, wrappers |
 | Persistent code execution | `PyRepl` | CodeAct-style workflows and runtime primitives |
 | Safe workspace file access | `FileToolset` | Controlled read/search/edit inside one workspace |
-| Live UI / observability | `enable_event=True` and `@tui` | Streaming interfaces and execution tracing |
+| Live UI / observability | `ReactOutput` streams and `@tui` | Streaming interfaces and execution tracing |
 
 ## Authoring rules
 
@@ -48,8 +48,9 @@ You can use them in function parameters, tool parameters, and some tool return s
 
 ## History and state
 
-- `@llm_chat` is intentionally stateless from the framework's point of view.
-- State normally lives in the `history` you pass in and the updated history you keep outside the function.
+- `@llm_function` returns an `LLMFunction` callable instance; `@llm_chat` returns an `LLMChat` callable instance. Treat them like normal callables in app code unless you are debugging framework internals.
+- `@llm_chat` keeps per-call state in invocation/session objects, not on shared mutable globals.
+- State normally lives in the `history` you pass in and SelfRef durable memory when mounted.
 - If you need durable runtime memory, mount `PyRepl` and use the built-in `selfref` runtime backend.
 - If you want the framework to recognize conversation history automatically, use the parameter name `history` or `chat_history`.
 
@@ -57,5 +58,5 @@ You can use them in function parameters, tool parameters, and some tool return s
 
 - Start with `@llm_function` unless the task truly needs multi-turn interaction.
 - Add tools only when the model needs an external capability.
-- Add `enable_event=True` only when you need live progress, debugging, or a UI.
+- Consume `ReactOutput` streams when you need live progress, debugging, or a UI.
 - Reach for `PyRepl` only when you want persistent execution, runtime discovery, or forkable memory.

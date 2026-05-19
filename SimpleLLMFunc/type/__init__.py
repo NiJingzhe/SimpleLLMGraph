@@ -4,6 +4,8 @@
 from SimpleLLMFunc.type.message import (
     MessageList,
     MessageParam,
+    NormalizedMessageList,
+    NormalizedMessageParam,
     ReasoningDetail,
     ExtendedMessageParam,
 )
@@ -67,6 +69,8 @@ __all__ = [
     # 消息类型
     "MessageParam",
     "MessageList",
+    "NormalizedMessageParam",
+    "NormalizedMessageList",
     "ReasoningDetail",
     "ExtendedMessageParam",
     # 多模态类型

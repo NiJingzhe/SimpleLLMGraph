@@ -73,6 +73,7 @@ The expected shape is provider name to model config list:
       "model_name": "z-ai/glm-5",
       "api_keys": ["key-1", "key-2"],
       "base_url": "https://openrouter.ai/api/v1",
+      "api_params": {"reasoning_effort": "high"},
       "max_retries": 5,
       "retry_delay": 1.0,
       "rate_limit_capacity": 20,
@@ -88,6 +89,7 @@ Important fields:
 - `model_name`: lookup key under one provider.
 - `api_keys`: one or more keys for load balancing.
 - `base_url`: OpenAI-compatible endpoint.
+- `api_params`: optional per-model default API kwargs (for example `reasoning_effort`); call-level kwargs override these defaults.
 - `max_retries` and `retry_delay`: transport retry behavior.
 - `rate_limit_capacity` and `rate_limit_refill_rate`: token bucket smoothing.
 
@@ -105,6 +107,7 @@ llm = models["openrouter"]["z-ai/glm-5"]
 - Keep `provider.json` local to your environment; do not assume the repo-root `provider.json` is the canonical example.
 - Within one provider, keep `model_name` values unique.
 - Prefer multiple API keys per hot model to reduce single-key throttling.
+- Use `api_params` for stable model-specific defaults such as reasoning effort, and call-level kwargs for one-off overrides.
 - Tune rate limits per model instead of reusing one configuration everywhere.
 - Keep the adapter choice explicit in app code so it is obvious whether one path is using chat/completions transport or Responses transport.
 

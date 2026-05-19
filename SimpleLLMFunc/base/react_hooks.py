@@ -13,12 +13,13 @@ from typing import Any, Optional
 
 from openai.types.completion_usage import CompletionUsage
 
+from SimpleLLMFunc.base.types import ContextMutation
 from SimpleLLMFunc.type import MessageList
 
 
 @dataclass
-class ReActState:
-    """Mutable execution state exposed to internal ReAct hooks."""
+class ReActHookExecutionContext:
+    """Mutable execution view exposed to internal ReAct hooks."""
 
     trace_id: str
     func_name: str
@@ -38,7 +39,11 @@ class ReActState:
     final_response: Optional[str] = None
 
 
-async def run_react_hook(hooks: Any, hook_name: str, state: ReActState) -> None:
+async def run_react_hook(
+    hooks: Any,
+    hook_name: str,
+    state: ReActHookExecutionContext,
+) -> None:
     """Invoke one optional internal ReAct hook if present."""
 
     if hooks is None:
@@ -53,4 +58,28 @@ async def run_react_hook(hooks: Any, hook_name: str, state: ReActState) -> None:
         await result
 
 
-__all__ = ["ReActState", "run_react_hook"]
+async def collect_react_context_mutations(
+    hooks: Any,
+    state: ReActHookExecutionContext,
+) -> list[ContextMutation]:
+    if hooks is None:
+        return []
+
+    hook = getattr(hooks, "collect_context_mutations", None)
+    if not callable(hook):
+        return []
+
+    result = hook(state)
+    if inspect.isawaitable(result):
+        result = await result
+
+    if not isinstance(result, list):
+        return []
+    return result
+
+
+__all__ = [
+    "ReActHookExecutionContext",
+    "collect_react_context_mutations",
+    "run_react_hook",
+]

@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Iterable, Literal, Any, AsyncGenerator
+from typing import Optional, Dict, Iterable, Literal, AsyncGenerator
 
 from SimpleLLMFunc.interface.key_pool import APIKeyPool
 from SimpleLLMFunc.logger import get_current_trace_id

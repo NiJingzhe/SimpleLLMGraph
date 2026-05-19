@@ -1,0 +1,107 @@
+---
+title: Prompt as Code
+description: Why docstrings are system prompts and prompts should never be separated from code
+---
+
+# Prompt as Code
+
+The third design principle: **your docstring IS the system prompt**. Prompts live in code, version with code, and are maintained like code.
+
+## The Problem with Separated Prompts
+
+Common patterns in LLM applications:
+
+- Prompts in YAML/JSON files, loaded at runtime
+- Prompt templates in a database, edited through a UI
+- Prompts as string constants defined far from where they're used
+- Prompts managed by a "prompt engineering" tool separate from the codebase
+
+All of these create the same problem: **prompt drift**. The prompt and the code that uses it evolve independently. The code expects certain output formats, but the prompt was edited without updating the parser. The prompt references parameters that no longer exist. Nobody knows which version of the prompt is running in production.
+
+## Docstring as System Prompt
+
+In SimpleLLMFunc, the function's docstring IS the prompt:
+
+```python
+@llm_function(llm_interface=llm)
+async def classify(text: str, categories: list[str]) -> Classification:
+    """
+    Classify the text into one of the provided categories.
+
+    Rules:
+    - Choose exactly one category.
+    - If none fit well, choose the closest match and set confidence below 0.5.
+    - Explain your reasoning in one sentence.
+    """
+    pass
+```
+
+The docstring is:
+- **Co-located** — Right next to the function signature it describes
+- **Versioned** — Changes tracked in git like any other code
+- **Type-aware** — The framework adds parameter types and return schema automatically
+- **Refactorable** — Rename a parameter, IDE updates the docstring reference
+- **Reviewable** — PRs show prompt changes in the same diff as code changes
+
+## What the Framework Adds
+
+Your docstring is the starting point, not the entire system prompt. The framework augments it with:
+
+1. **Parameter type descriptions** — Generated from your type annotations
+2. **Return type schema** — Structured output format instructions
+3. **Tool best practices** — Injected from tool docstrings when tools are mounted
+4. **Output constraints** — XML/JSON formatting rules based on return type
+
+You write the **task policy** — what the model should do, what quality bar to meet, what constraints to respect. The framework handles the structural plumbing.
+
+## Template Parameters for Dynamic Prompts
+
+When you need runtime-variable content in the prompt:
+
+```python
+@llm_chat(llm_interface=llm, toolkit=[...])
+async def agent(message: str, history: list | None = None):
+    """
+    You are an assistant for the {project_name} project.
+
+    Project context:
+    {project_description}
+
+    Available commands: {command_list}
+    """
+    pass
+
+# At call time:
+async for output in agent(
+    "Help me with this bug",
+    history,
+    _template_params={
+        "project_name": "MyApp",
+        "project_description": "A web API for...",
+        "command_list": "build, test, deploy",
+    },
+):
+    ...
+```
+
+The template lives in the docstring. The values come from your code. Both are traceable, testable, and version-controlled.
+
+## For llm_chat: Latest System Message Wins
+
+In multi-turn agents, you can update the system prompt mid-conversation by placing a `system` message in history. The framework uses the **latest** system message — or falls back to the docstring if none exists in history.
+
+This enables:
+- Dynamic system prompts that evolve based on conversation state
+- SelfRef context injection (experiences, summaries) without docstring mutation
+- Per-turn context customization while keeping the base prompt in code
+
+## The Implication for Prompt Engineering
+
+Prompt engineering becomes software engineering:
+- **Test prompts** — Assert on function outputs with known inputs
+- **Review prompts** — Prompt changes go through code review
+- **Version prompts** — Git blame tells you when and why a prompt changed
+- **Profile prompts** — Measure latency and token usage per function
+- **Compose prompts** — Build complex behaviors from smaller, tested prompt-functions
+
+There's no separate "prompt management" concern. The prompt is the function. The function is the prompt.

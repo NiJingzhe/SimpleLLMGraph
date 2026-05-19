@@ -156,13 +156,13 @@ SimpleLLMFunc/
 - 使用装饰器模式包装普通函数为 LLM 调用
 - 支持单次调用（llm_function）和对话模式（llm_chat）
 - 内置 ReAct 执行逻辑，支持工具调用和多轮对话
-- 通过 `selfref_sync.py` 将 `llm_chat` 生命周期与 `SelfReference` 状态同步桥接
+- 通过 `LLMChat` callable instance 与 `SelfRefSession` 将 `llm_chat` 生命周期和 `SelfReference` 状态同步桥接
 
 **子模块**:
 
 - `llm_function_decorator.py`: @llm_function 装饰器实现
 - `llm_chat_decorator.py`: @llm_chat 装饰器实现
-- `selfref_sync.py`: `llm_chat` 与 `SelfReference` 的生命周期同步桥接
+- `selfref_sync.py` (legacy compatibility shim; active SelfRef session binding is in `LLMChat` + `runtime/selfref/session.py`) (legacy compatibility shim; active SelfRef session binding is in `LLMChat` + `runtime/selfref/session.py`): `llm_chat` 与 `SelfReference` 的生命周期同步桥接
 - `steps/function/react.py`: LLM Function 的 ReAct 执行逻辑
 - `steps/chat/react.py`: LLM Chat 的 ReAct 执行逻辑
 - `steps/common/`: 通用步骤工具（signature, prompt, types 等）
@@ -179,7 +179,7 @@ SimpleLLMFunc/
 **架构特点**:
 
 - ReAct 循环核心实现，支持工具调用编排
-- `execute_llm()` 已按 phase 拆分，统一 LLM phase、tool batch phase 与 terminal finalize phase
+- `ReAct_loop()` 已按 phase 拆分，统一 LLM phase、tool batch phase 与 terminal finalize phase
 - 工具调用执行、验证、提取逻辑
 - 消息处理和类型解析
 

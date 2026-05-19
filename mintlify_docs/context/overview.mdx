@@ -1,0 +1,160 @@
+---
+title: Context Overview
+description: "The mental model: what IS context in SimpleLLMFunc and how data flows through the system"
+---
+
+# Context Overview
+
+This page explains how SimpleLLMFunc compiles context — the information the LLM sees at each reasoning step. The final provider-facing message list is built from invocation configuration, a base transcript, and internal runtime patches.
+
+## The Core Data Structures
+
+### ContextState
+
+The runtime representation of a conversation's current state:
+
+```python
+@dataclass
+class ContextState:
+    messages: NormalizedMessageList           # The conversation transcript
+    data_from_selfref: Optional[DataFromSelfRef]  # Durable self-reference state
+    pending_mutations: List[ContextMutation]  # Changes waiting to be applied
+```
+
+- `messages` is the base transcript for the current runtime state — assistant messages, tool results, user messages
+- `data_from_selfref` carries durable state from the SelfReference backend (experiences, summaries)
+- `pending_mutations` accumulates internal runtime patches during a ReAct iteration, applied to the transcript at the next compile boundary
+
+### CompileSource
+
+The input boundary — everything needed to produce an LLM request:
+
+```python
+@dataclass(frozen=True)
+class CompileSource:
+    data_from_agent_config: DataFromAgentConfig  # Static: system prompt, tool specs
+    data_from_selfref: Optional[DataFromSelfRef] # Durable: experiences, summaries
+    input_messages: NormalizedMessageList         # Dynamic: conversation messages
+```
+
+### DataFromAgentConfig
+
+Static configuration from the decorator:
+
+```python
+@dataclass(frozen=True)
+class DataFromAgentConfig:
+    base_system_prompt: str                    # From docstring (possibly templated)
+    template_params: Optional[Dict[str, Any]]  # Runtime template values
+    tool_prompt_specs: List[Dict[str, Any]]    # Tool best-practice injections
+    include_must_principles: bool              # Whether to add structured-call rules
+```
+
+### DataFromSelfRef
+
+Durable state from the SelfReference backend:
+
+```python
+@dataclass(frozen=True)
+class DataFromSelfRef:
+    base_system_prompt: str                    # System prompt with selfref markers
+    experiences: List[Dict[str, str]]          # Durable remembered experiences
+    summary: Optional[Dict[str, Any]]          # Compaction summary metadata
+    summary_message: Optional[Dict[str, Any]]  # The summary as a message
+    working_messages: NormalizedMessageList     # Post-compaction working transcript
+```
+
+## Context Inputs
+
+SimpleLLMFunc does not build LLM context from mutations alone. Each LLM request is compiled from three inputs:
+
+1. **Invocation configuration** — the `InvocationSpec` / prompt contract built from the decorated function, docstring, template parameters, tool guidance, return mode, and SelfRef snapshot.
+2. **Base transcript** — the message list created from `history` / `chat_history`, the current user input, and the previous finalized messages.
+3. **Runtime patches** — `ContextMutation` objects produced internally by LLM calls, tools, SelfRef primitives, compaction, and abort/cancel handling.
+
+```text
+provider messages = render(invocation config, patch(base transcript, runtime patches))
+```
+
+## Data Flow: From Your Code to the LLM
+
+```
+┌─ Your Code ──────────────────────────────────────────────┐
+│                                                           │
+│  @llm_chat(llm_interface=llm, toolkit=[...])             │
+│  async def agent(message: str, history: list):            │
+│      """System prompt here."""                            │
+│      pass                                                 │
+│                                                           │
+│  async for output in agent("hello", history):             │
+│      ...                                                  │
+│                                                           │
+└───────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─ Decorator Layer ────────────────────────────────────────┐
+│                                                           │
+│  Build InvocationSpec:                                    │
+│    - Parse docstring → base_system_prompt                 │
+│    - Collect tool specs → tool_prompt_specs               │
+│    - Resolve template_params                              │
+│    - Build initial transcript from history + user message │
+│                                                           │
+└───────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─ ReAct Loop ─────────────────────────────────────────────┐
+│                                                           │
+│  while has_more_work:                                     │
+│                                                           │
+│    1. Collect hook mutations (selfref, etc.)              │
+│    2. compile_context(state, pending_mutations)           │
+│         → apply_mutations → CompiledContext               │
+│    3. compile_invocation_turn(spec, messages, [], selfref)│
+│         → reduce + convert → CompiledTurnContext          │
+│    4. execute_single_llm_phase(compiled.llm_messages)     │
+│         → yields events + produces mutations              │
+│    5. If tool calls: schedule_tool_batch(...)             │
+│         → executes tools → produces mutations             │
+│    6. Merge all mutations → loop back to step 1           │
+│                                                           │
+└───────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─ Interface Layer ────────────────────────────────────────┐
+│                                                           │
+│  OpenAICompatible.chat_stream(messages=[...])             │
+│  → HTTP request to provider                               │
+│  → Stream response back                                   │
+│                                                           │
+└───────────────────────────────────────────────────────────┘
+```
+
+## The Key Invariants
+
+1. **Runtime side effects do not edit the live transcript directly** — LLM calls, tools, SelfRef primitives, and abort handling produce `ContextMutation` patches instead of mutating `ContextState.messages` in place.
+
+2. **Mutations are transcript patches, not the whole context** — docstrings, template params, tool guidance, SelfRef snapshots, and initial history come from invocation configuration and the base transcript.
+
+3. **Mutations accumulate, then apply atomically** — During a ReAct iteration, runtime patches collect in `pending_mutations`. They're applied together at the compile boundary.
+
+4. **Compile produces a snapshot** — The compiled output is a clone. The original state is never mutated in place.
+
+5. **SelfRef state propagates** — `DataFromSelfRef` is carried forward through compilations. If selfref markers are detected in the transcript after mutation application, the snapshot is refreshed.
+
+6. **System prompt resolution has priority order**:
+   - SelfRef snapshot (if present) → renders base prompt + experiences
+   - PromptContract.system_prompt (if set explicitly)
+   - Latest system message in transcript
+   - PromptContract.base_instruction (docstring fallback)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Runtime Patches" icon="arrows-rotate" href="/context/mutations">
+    The internal mutation types — when runtime effects produce transcript patches.
+  </Card>
+  <Card title="Compile Pipeline" icon="microchip" href="/context/compile-pipeline">
+    How invocation config, transcript, and patches become the final LLM request.
+  </Card>
+</CardGroup>

@@ -1,0 +1,76 @@
+---
+title: SimpleLLMFunc
+description: 用 Python 函数构建类型安全的 LLM Agent
+---
+
+# SimpleLLMFunc
+
+**LLM 调用即类型化 Python 函数。上下文由提示词、历史和运行时补丁编译而来。提示词即代码。**
+
+SimpleLLMFunc 是一个用于构建 LLM 驱动 Agent 的框架，其中每一次 LLM 交互都是一个普通的 Python 函数调用——有类型、可测试、可组合。没有链、没有图、没有 YAML。只有函数。
+
+---
+
+## 选择你的路径
+
+<CardGroup cols={3}>
+  <Card title="开始构建" icon="rocket" href="/zh/quickstart">
+    5 分钟内获得一个可运行的 Agent。安装、配置、运行。
+  </Card>
+  <Card title="理解设计模型" icon="brain" href="/zh/philosophy/llm-is-function">
+    了解 SimpleLLMFunc 为什么这样设计。三篇关于设计哲学的短文。
+  </Card>
+  <Card title="API 参考" icon="book" href="/zh/api/decorators">
+    直接查看签名、类型和参数。
+  </Card>
+</CardGroup>
+
+---
+
+## 有什么不同
+
+### LLM 即函数
+
+```python
+@llm_function(llm_interface=llm)
+async def analyze(text: str) -> SentimentReport:
+    """分析情感倾向，返回结构化报告。"""
+    pass
+
+result = await analyze("产品很好，物流太慢。")
+print(result.sentiment)  # "mixed"
+```
+
+无需 SDK 样板代码。无需手动构建消息列表。装饰器处理上下文编译、类型解析和结构化输出提取。你只需写函数签名和文档字符串。
+
+### 以上下文为中心
+
+每次 LLM 调用都会被编译成提供商可接受的消息列表。编译器会合并 invocation 配置（docstring、模板参数、工具指导）、基础对话记录/history，以及内部运行时补丁。这些补丁由 **Mutation** 表示，用来避免 LLM 调用、工具、SelfRef 和中断处理直接编辑运行中的对话记录。
+
+### 提示词即代码
+
+你的文档字符串就是系统提示词。它与使用它的代码在一起，与 git 一起版本控制，并且可以利用 IDE 工具。没有独立的提示词文件，没有模板引擎，你写的和模型看到的之间不会产生偏差。
+
+---
+
+## 技术栈一览
+
+```
+┌─────────────────────────────────────────┐
+│         你的 Agent 代码                   │
+│   @llm_function / @llm_chat / @tool     │
+├─────────────────────────────────────────┤
+│         编译边界                          │
+│   配置 + 对话记录 + 补丁 → LLM 请求       │
+├─────────────────────────────────────────┤
+│         ReAct 运行时                      │
+│   事件流、工具调度、中断                    │
+├─────────────────────────────────────────┤
+│         接口层                            │
+│   OpenAICompatible / ResponsesCompatible│
+└─────────────────────────────────────────┘
+```
+
+<Card title="准备好了？" icon="code" href="/zh/quickstart">
+  从 5 分钟快速入门开始，从零到一个可运行的 LLM 函数调用。
+</Card>

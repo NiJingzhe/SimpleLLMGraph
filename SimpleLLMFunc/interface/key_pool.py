@@ -24,11 +24,13 @@ class APIKeyPool:
 
         if len(api_keys) == 0 or api_keys is None:
             push_critical(
-                f"API 密钥池 {provider_id} 为空。请检查您的配置。", # 更新日志为中文
+                f"API key pool {provider_id} is empty. Please check your configuration.",
                 location=get_location()
             )
 
-            raise ValueError(f"API 密钥池 {provider_id} 为空。请检查您的配置。") # 更新错误信息为中文
+            raise ValueError(
+                f"API key pool {provider_id} is empty. Please check your configuration."
+            )
 
 
         self.api_keys = api_keys
@@ -48,13 +50,13 @@ class APIKeyPool:
         with self.lock: # 获取锁保护读操作
             # 获取任务数量最小的 API key
             if not self.heap:
-                raise ValueError(f"{self.app_id} 没有可用的 API 密钥") # 更新错误信息为中文
+                raise ValueError(f"{self.app_id} has no available API keys")
             return self.heap[0][1]
 
     def increment_task_count(self, api_key: str) -> None:
         with self.lock: # 获取锁
             if api_key not in self.key_to_task_count:
-                raise ValueError(f"API 密钥 {api_key} 不在池中") # 更新错误信息为中文
+                raise ValueError(f"API key {api_key} is not in the pool")
 
             # 增加任务计数
             self.key_to_task_count[api_key] += 1
@@ -65,7 +67,7 @@ class APIKeyPool:
     def decrement_task_count(self, api_key: str) -> None:
         with self.lock: # 获取锁
             if api_key not in self.key_to_task_count:
-                raise ValueError(f"API 密钥 {api_key} 不在池中") # 更新错误信息为中文
+                raise ValueError(f"API key {api_key} is not in the pool")
 
             # 减少任务计数
             self.key_to_task_count[api_key] -= 1
@@ -76,7 +78,7 @@ class APIKeyPool:
     def _update_heap(self, api_key: str, new_task_count: int) -> None:
         # 使用映射快速找到元素在堆中的位置 - O(1)
         if api_key not in self.key_to_index:
-            raise ValueError(f"API 密钥 {api_key} 不在堆中")
+            raise ValueError(f"API key {api_key} is not in the heap")
 
         index = self.key_to_index[api_key]
         old_count, _ = self.heap[index]

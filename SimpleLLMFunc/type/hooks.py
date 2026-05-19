@@ -10,16 +10,11 @@ from datetime import datetime
 from enum import Enum
 
 # 复用框架内类型
-from SimpleLLMFunc.type.message import MessageList, MessageParam
+from SimpleLLMFunc.type.message import MessageList, MessageParam, NormalizedMessageList
 from SimpleLLMFunc.type.multimodal import ImgPath, ImgUrl, Text
 from SimpleLLMFunc.type.tool_call import (
-    ToolCall,
-    ToolCallFunction,
     ToolCallArguments,
-    ToolDefinition,
-    ToolDefinitionList,
 )
-from SimpleLLMFunc.type.llm import LLMResponse, LLMUsage
 
 # ============================================================================
 # Hook 上下文类型
@@ -189,8 +184,8 @@ Message: TypeAlias = MessageParam
 Messages: TypeAlias = MessageList
 """消息列表类型（复用 MessageList）"""
 
-# 历史消息类型（统一使用 MessageList）
-HistoryList: TypeAlias = MessageList
+# 历史消息类型（统一使用归一化后的 dict-like 消息列表）
+HistoryList: TypeAlias = NormalizedMessageList
 """
 历史消息列表类型
 
@@ -212,5 +207,3 @@ __all__ = [
     "Messages",
     "HistoryList",
 ]
-
-

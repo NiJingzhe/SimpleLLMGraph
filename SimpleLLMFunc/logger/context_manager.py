@@ -135,7 +135,7 @@ async def async_log_context(**kwargs: Any) -> AsyncGenerator[None, None]:
 
     Example:
         >>> async with async_log_context(trace_id="my_function_123", user_id="456"):
-        ...     push_info("处理用户请求")  # 日志会自动包含trace_id和user_id
+        ...     push_info("Processing user request")  # Logs automatically include trace_id and user_id
 
     Note:
         - 支持异步环境
@@ -193,7 +193,7 @@ def log_context(**kwargs: Any) -> Generator[None, None, None]:
 
     Example:
         >>> with log_context(trace_id="my_function_123", user_id="456"):
-        ...     push_info("处理用户请求")  # 日志会自动包含trace_id和user_id
+        ...     push_info("Processing user request")  # Logs automatically include trace_id and user_id
 
     Note:
         - 支持同步环境

@@ -1,0 +1,254 @@
+---
+title: 内置组件
+description: "SelfReference、PyRepl 和 FileToolset 的 API 参考"
+---
+
+# 内置组件 API 参考
+
+## SelfReference
+
+```python
+from SimpleLLMFunc.builtin import SelfReference
+```
+
+用于代理记忆（agent memory）、上下文管理和分叉编排（fork orchestration）的持久化后端。
+
+### 构造函数
+
+```python
+SelfReference()
+```
+
+### 关键方法
+
+| 方法 | 描述 |
+|------|------|
+| `bind_history(key, history)` | 将对话历史绑定到一个记忆键 |
+| `get_history(key)` | 获取某个键的当前历史 |
+| `get_experiences(key)` | 获取某个键已存储的经验 |
+
+### 记忆键隔离
+
+每个键拥有独立的状态：
+- History（对话记录）
+- Experiences（持久化事实）
+- Summary state（压缩检查点）
+- Fork handles（子代理状态）
+
+### 与 @llm_chat 配合使用
+
+```python
+# Automatic (recommended)
+@llm_chat(llm_interface=llm, self_reference_key="agent_main", ...)
+async def agent(...):
+    ...
+
+# Explicit backend
+selfref = SelfReference()
+selfref.bind_history("my_key", initial_history)
+
+@llm_chat(llm_interface=llm, self_reference=selfref, self_reference_key="my_key", ...)
+async def agent(...):
+    ...
+```
+
+### 运行时原语（通过 PyRepl）
+
+当 SelfRef 处于激活状态时，以下原语在 `execute_code` 中可用：
+
+```python
+# Context
+runtime.selfref.context.inspect() -> dict
+runtime.selfref.context.remember(text: str) -> dict  # {id, text}
+runtime.selfref.context.forget(experience_id: str) -> bool
+runtime.selfref.context.compact(
+    goal: str,
+    instruction: str,
+    discoveries: list[str],
+    completed: list[str],
+    current_status: str,
+    likely_next_work: str,
+    relevant_files_directories: list[str],
+    remember: list[str] = [],
+) -> dict  # {assistant_message, ...}
+
+# Fork
+runtime.selfref.fork.spawn(
+    task: str,
+    instruction: str,
+    ...
+) -> dict  # {fork_id, status}
+runtime.selfref.fork.gather_all(include_history: bool = False) -> dict  # {fork_id: ForkResult}
+```
+
+---
+
+## PyRepl
+
+```python
+from SimpleLLMFunc.builtin import PyRepl
+```
+
+在子进程中运行的持久化 IPython REPL，支持运行时原语。
+
+### 构造函数
+
+```python
+PyRepl(working_directory: Optional[Path | str] = None)
+```
+
+| 参数 | 默认值 | 描述 |
+|------|--------|------|
+| `working_directory` | `None`（当前工作目录） | REPL 进程的工作目录 |
+
+### 属性
+
+| 属性 | 类型 | 描述 |
+|------|------|------|
+| `.toolset` | `List[Tool]` | 两个工具：`execute_code` + `reset_repl` |
+
+### 方法
+
+| 方法 | 描述 |
+|------|------|
+| `install_primitive_pack(pack)` | 在此 REPL 中注册一个 PrimitivePack |
+| `get_runtime_backend(name)` | 按包命名空间获取已安装的后端 |
+| `reset()` | 清除 REPL 变量（保留后端） |
+
+### 提供的工具
+
+#### execute_code
+
+```python
+async def execute_code(code: str, event_emitter=None) -> dict:
+    """Run Python code in the persistent REPL."""
+```
+
+返回值：
+```python
+{
+    "stdout": str,          # Captured stdout
+    "stderr": str,          # Captured stderr
+    "return_value": str,    # Repr of last expression (or None)
+    "error": str | None,    # Error message if failed
+    "execution_time_ms": float,
+}
+```
+
+#### reset_repl
+
+```python
+async def reset_repl() -> str:
+    """Clear REPL variables. Preserves runtime backends."""
+```
+
+### 示例
+
+```python
+from SimpleLLMFunc.builtin import PyRepl
+
+repl = PyRepl(working_directory="/path/to/project")
+
+@llm_chat(llm_interface=llm, toolkit=repl.toolset, stream=True)
+async def code_agent(message: str, history: list | None = None):
+    """Execute Python to solve problems."""
+    pass
+```
+
+### 自定义事件
+
+| 事件名称 | 数据 | 描述 |
+|----------|------|------|
+| `kernel_stdout` | `{"text": str}` | 实时标准输出行 |
+| `kernel_stderr` | `{"text": str}` | 实时标准错误行 |
+
+### 执行限制
+
+| 设置 | 默认值 |
+|------|--------|
+| 执行超时 | 600 秒 |
+| 输入空闲超时 | 300 秒 |
+| 输出截断 | ~20,000 token → 临时文件 |
+
+---
+
+## FileToolset
+
+```python
+from SimpleLLMFunc.builtin import FileToolset
+```
+
+工作区范围的文件操作，带有过期写入保护（stale-write protection）。
+
+### 构造函数
+
+```python
+FileToolset(workspace: Path | str)
+```
+
+所有路径相对于 `workspace` 解析。拒绝超出工作区的路径遍历。
+
+### 属性
+
+| 属性 | 类型 | 描述 |
+|------|------|------|
+| `.toolset` | `List[Tool]` | 5 个文件工具 |
+
+### 提供的工具
+
+#### read_file
+
+```python
+async def read_file(path: str, start_line: int = None, end_line: int = None) -> str
+```
+
+返回带行号的内容：`<lineno> | <content>`。
+
+#### read_image
+
+```python
+async def read_image(path: str) -> ImgPath
+```
+
+以多模态内容返回图像（detail="high"）。
+
+#### grep
+
+```python
+async def grep(pattern: str, path_pattern: str) -> str
+```
+
+在工作区文件中进行正则搜索。`path_pattern` 用于限定搜索的文件范围。
+
+#### sed
+
+```python
+async def sed(path: str, start_line: int, end_line: int, pattern_to_be_replaced: str, new_string: str) -> str
+```
+
+在指定行范围内进行正则查找替换。受基于哈希的过期检测保护。
+
+#### echo_into
+
+```python
+async def echo_into(path: str, content: str) -> str
+```
+
+覆盖整个文件。受基于哈希的过期检测保护（必须先读取文件）。
+
+### 过期写入保护
+
+FileToolset 在读取时跟踪文件哈希。如果在读取和写入之间文件被外部修改，`sed` 和 `echo_into` 将拒绝写入并要求代理重新读取。
+
+### 示例
+
+```python
+from SimpleLLMFunc.builtin import FileToolset
+
+files = FileToolset("/path/to/workspace")
+
+@llm_chat(llm_interface=llm, toolkit=files.toolset, stream=True)
+async def file_agent(message: str, history: list | None = None):
+    """An agent that can read and edit files in the workspace."""
+    pass
+```

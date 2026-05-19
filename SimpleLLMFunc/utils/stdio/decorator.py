@@ -5,14 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import inspect
 from functools import wraps
-from typing import Any, AsyncGenerator, Optional, Sequence, TextIO
+from typing import Any, Optional, Sequence, TextIO
 
 from SimpleLLMFunc.hooks.input_stream import AgentInputRouter, UserInputEvent
 from SimpleLLMFunc.hooks.abort import AbortSignal, ABORT_SIGNAL_PARAM
-from SimpleLLMFunc.hooks.stream import ReactOutput
 from SimpleLLMFunc.type.message import MessageList
 from SimpleLLMFunc.utils.tui.core import consume_react_stream
 from SimpleLLMFunc.utils.tui.decorator import (

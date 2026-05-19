@@ -1,5 +1,48 @@
 # Change log for SimpleLLMFunc
 
+## 0.8.0 (2026-05-19) - Callable Decorators, Unified Chat Events, and Provider Defaults
+
+### ✨ New Features
+
+1. **OpenAI-compatible per-model API defaults**:
+   - Added optional `api_params` support to `OpenAICompatible` model configs loaded from `provider.json`.
+   - Instance-level `api_params` are passed to chat and streaming calls.
+   - Call-level kwargs override `api_params`, enabling stable model defaults with one-off overrides.
+
+### 💥 Breaking Changes
+
+1. **Removed legacy `llm_chat(return_mode=...)`**:
+   - `llm_chat` no longer accepts the obsolete `return_mode` decorator option.
+   - Chat invocations now consistently yield `ReactOutput` items (`ResponseYield` / `EventYield`) directly.
+   - Update old `(chunk, history)` consumers to route with `is_response_yield(...)` / `is_event_yield(...)` and read `output.messages` for updated history.
+
+### 🔧 Improvements
+
+1. **Runtime toolkit override merging**:
+   - SelfRef runtime toolkit overrides now merge with the default toolkit instead of replacing it outright.
+   - Override tools take priority when a tool with the same name exists in both toolkits.
+
+2. **Decorator callable instances**:
+   - `@llm_function` now returns an `LLMFunction` callable instance while preserving `await fn(...)`, `fn.stream(...)`, and function-like metadata.
+   - `@llm_chat` now returns an `LLMChat` callable instance whose calls yield `ReactOutput` streams.
+   - SelfRef now binds to the stable `LLMChat` agent instance, making rebinding and fork toolkit resolution more explicit internally.
+   - Exported `LLMFunction` and `LLMChat` from `SimpleLLMFunc.llm_decorator` and package-level imports.
+
+### 📚 Documentation & Skills
+
+1. **Context model wording clarification**:
+   - Updated Mintlify docs and packaged usage skill to describe `ContextMutation` as an internal runtime transcript patch protocol.
+   - Clarified that LLM requests are compiled from invocation configuration, a base transcript/history, and runtime patches.
+   - Removed public-facing wording that implied mutations are the whole context source or primary user-facing customization surface.
+
+2. **Configuration docs for `api_params`**:
+   - Documented `api_params` in English/Chinese Mintlify config pages and packaged skill references.
+
+### 🧪 Testing
+
+- Added tests for `OpenAICompatible` `api_params` loading, forwarding, and call-level override behavior.
+- Added tests for runtime toolkit override merging and tool-name precedence.
+
 ## 0.7.8 (2026-04-16) - Responses Adapter and Selfref Fork Context Refinement
 
 ### ✨ New Features
@@ -487,7 +530,7 @@ If you encounter any issues after upgrading:
 
 ### Refactoring
 
-1. **ReAct Engine Return Type Enhancement**: Modified `execute_llm` function to return both response and message history in streaming mode.
+1. **ReAct Engine Return Type Enhancement**: Modified the ReAct loop entrypoint at that time to return both response and message history in streaming mode.
    - Changed return type from `AsyncGenerator[Any, None]` to `AsyncGenerator[Tuple[Any, List[Dict[str, Any]]], None]`
    - Now yields `(response, current_messages.copy())` instead of just `response`
    - Creates a copy of `current_messages` to avoid modifying the original list

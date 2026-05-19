@@ -1566,6 +1566,7 @@ class PyRepl:
                 if (
                     active_key is not None
                     and self_reference_backend.has_pending_compaction(active_key)
+                    and self_reference_backend._get_active_react_state() is None
                 ):
                     self_reference_backend.commit_pending_compaction(active_key)
 

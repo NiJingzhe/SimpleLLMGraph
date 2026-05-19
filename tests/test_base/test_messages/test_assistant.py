@@ -47,6 +47,23 @@ class TestBuildAssistantToolMessage:
             "tool_calls": tool_calls,
         }
 
+    def test_build_with_tool_calls_and_content(self) -> None:
+        """Assistant tool-call messages may also carry textual content."""
+
+        tool_calls = [
+            {
+                "id": "call_123",
+                "type": "function",
+                "function": {"name": "test_tool", "arguments": '{"arg": "value"}'},
+            }
+        ]
+        result = build_assistant_tool_message(tool_calls, content="Let me check that.")
+        assert result == {
+            "role": "assistant",
+            "content": "Let me check that.",
+            "tool_calls": tool_calls,
+        }
+
     def test_build_with_empty_tool_calls(self) -> None:
         """Test building assistant message with empty tool calls."""
         result = build_assistant_tool_message([])

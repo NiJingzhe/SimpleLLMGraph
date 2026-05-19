@@ -1,0 +1,201 @@
+---
+title: "工具"
+description: "使用 @tool 定义工具、组合工具集，并处理多模态返回"
+---
+
+# 工具
+
+工具是 LLM 可以调用的异步函数，它们是模型推理与真实操作之间的桥梁。
+
+## 基本 @tool
+
+```python
+from SimpleLLMFunc import tool
+
+
+@tool
+async def get_weather(city: str, unit: str = "celsius") -> str:
+    """
+    Get current weather for a city.
+
+    Args:
+        city: City name (e.g., "Tokyo", "New York").
+        unit: Temperature unit — "celsius" or "fahrenheit".
+
+    Returns:
+        Current weather description.
+
+    Best Practices:
+        - Use full city names, not abbreviations.
+        - Default to celsius unless the user specifies otherwise.
+    """
+    # Your implementation here
+    return f"Sunny, 22°C in {city}"
+```
+
+## 核心规则
+
+1. **必须是异步函数** — `@tool` 要求使用 `async def`，不支持同步函数。
+2. **文档字符串即规格说明** — 模型看到的工具描述就是你的文档字符串。
+3. **最佳实践很重要** — `Best Practices` 部分会作为 `<tool_best_practices>` 注入到系统提示词中。用它来引导模型何时以及如何使用工具。
+4. **类型注解定义 schema** — 参数类型会转换为工具的 JSON schema。
+
+## 文档字符串结构
+
+```python
+@tool
+async def my_tool(param: str) -> str:
+    """
+    One-line description of what the tool does.
+
+    Longer explanation if needed. This becomes the tool description
+    the model sees.
+
+    Args:
+        param: Description of this parameter.
+
+    Returns:
+        What the tool returns.
+
+    Best Practices:
+        - When to use this tool vs. alternatives.
+        - Common pitfalls to avoid.
+        - Expected input formats.
+    """
+```
+
+## 组合工具集
+
+将多个工具传递给智能体：
+
+```python
+@llm_chat(llm_interface=llm, toolkit=[get_weather, search_docs, calculate])
+async def agent(message: str, history: list | None = None):
+    """Use available tools to answer questions."""
+    pass
+```
+
+## 内置工具集
+
+### FileToolset
+
+具有过期写入保护的工作区级文件操作：
+
+```python
+from SimpleLLMFunc.builtin import FileToolset
+
+file_tools = FileToolset("/path/to/workspace")
+
+@llm_chat(llm_interface=llm, toolkit=file_tools.toolset)
+async def file_agent(message: str, history: list | None = None):
+    """A file-aware assistant."""
+    pass
+```
+
+FileToolset 提供 5 个工具：`read_file`、`read_image`、`grep`、`sed`、`echo_into`。
+
+### PyRepl
+
+带运行时原语的持久化 Python REPL：
+
+```python
+from SimpleLLMFunc.builtin import PyRepl
+
+repl = PyRepl(working_directory="/path/to/workspace")
+
+@llm_chat(llm_interface=llm, toolkit=repl.toolset)
+async def code_agent(message: str, history: list | None = None):
+    """Execute Python code to solve problems."""
+    pass
+```
+
+PyRepl 提供 2 个工具：`execute_code`、`reset_repl`。
+
+## 多模态返回
+
+工具可以返回图片和混合内容：
+
+```python
+from SimpleLLMFunc.type import ImgPath, ImgUrl
+
+
+@tool
+async def generate_chart(data: str) -> ImgPath:
+    """Generate a chart from the data."""
+    # ... create chart, save to file ...
+    return ImgPath(path="/tmp/chart.png")
+
+
+@tool
+async def fetch_screenshot(url: str) -> ImgUrl:
+    """Take a screenshot of a webpage."""
+    return ImgUrl(url="https://screenshot-api.example.com/capture?url=" + url)
+```
+
+多模态返回会由运行时通过内部对话记录补丁进行重组——图片会被放置在用户消息中（大多数提供商的要求）。
+
+## 元组返回（混合内容）
+
+同时返回文本和图片：
+
+```python
+@tool
+async def analyze_image(image_path: str) -> tuple[str, ImgPath]:
+    """Analyze an image and return description + annotated version."""
+    description = "A landscape photo..."
+    annotated = ImgPath(path="/tmp/annotated.png")
+    return description, annotated
+```
+
+## 长输出处理
+
+对于产生超长输出的工具：
+
+```python
+@tool(too_long_to_file=True)
+async def read_large_file(path: str) -> str:
+    """Read a potentially large file."""
+    with open(path) as f:
+        return f.read()
+```
+
+设置 `too_long_to_file=True` 后，如果结果超过约 20,000 个 token，框架会：
+1. 将完整输出写入临时文件
+2. 向模型发送截断版本和文件路径
+3. 模型随后可以按需读取特定部分
+
+## 动态创建工具
+
+以编程方式创建工具：
+
+```python
+from SimpleLLMFunc import Tool
+
+
+def make_api_tool(endpoint: str, description: str) -> Tool:
+    async def call_api(params: str) -> str:
+        # ... call endpoint ...
+        return "result"
+
+    return Tool(
+        name=f"call_{endpoint}",
+        description=description,
+        func=call_api,
+        best_practices=["Use structured JSON for params"],
+    )
+```
+
+## 系统提示词注入
+
+每个工具的 `Best Practices` 部分会被收集并作为 `<tool_best_practices>` 块注入到系统提示词的顶部。这是自动完成的——你无需在文档字符串中引用工具。
+
+此外，工具可以通过 `prompt_injection_builder` 提供动态提示词注入：
+
+```python
+@tool(prompt_injection_builder=lambda ctx: f"Current workspace: {ctx.get('workspace', '/')}")
+async def list_files(path: str) -> str:
+    """List files in a directory."""
+    ...
+```
+
+→ [API 参考：装饰器](/zh/api/decorators) | [API 参考：内置组件](/zh/api/builtins)

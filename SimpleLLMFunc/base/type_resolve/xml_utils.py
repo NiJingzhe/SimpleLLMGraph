@@ -3,15 +3,23 @@
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from typing import Any, Dict, List, Optional, Type, Union, get_origin, get_args
+from typing import Any, Dict, List, Optional, Type, Union, cast, get_origin, get_args
 from xml.sax.saxutils import escape
 
 from pydantic import BaseModel
 
 
+def _is_pydantic_model_type(value: Any) -> bool:
+    return isinstance(value, type) and issubclass(value, BaseModel)
+
+
+def _as_pydantic_model_type(value: Any) -> Type[BaseModel]:
+    return cast(Type[BaseModel], value)
+
+
 def _get_root_element_name(type_hint: Any) -> str:
     """根据返回类型智能确定 XML 根元素名称"""
-    if isinstance(type_hint, type) and issubclass(type_hint, BaseModel):
+    if _is_pydantic_model_type(type_hint):
         return type_hint.__name__
     return "result"
 
@@ -59,7 +67,7 @@ def pydantic_to_xml_schema(
         return f"{name} (depth limit reached)"
 
     # Pydantic model
-    if isinstance(type_hint, type) and issubclass(type_hint, BaseModel):
+    if _is_pydantic_model_type(type_hint):
         type_id = ("model", type_hint)
         if type_id in seen:
             return f"{type_hint.__name__} (circular reference)"
@@ -180,7 +188,7 @@ def generate_xml_example(
     root_name = _get_root_element_name(type_hint)
 
     # BaseModel
-    if isinstance(type_hint, type) and issubclass(type_hint, BaseModel):
+    if _is_pydantic_model_type(type_hint):
         type_id = ("model", type_hint)
         if type_id in seen:
             return f"<{root_name}>...</{root_name}>"
@@ -461,9 +469,9 @@ def dict_to_pydantic(data: Dict[str, Any], model_class: Type[BaseModel]) -> Base
                         # 多个 item：{'item': [...]}
                         item_list = value["item"]
                         # 如果列表元素是 Pydantic 模型，递归转换
-                        if isinstance(item_type, type) and issubclass(item_type, BaseModel):
+                        if _is_pydantic_model_type(item_type):
                             cleaned_data[key] = [
-                                dict_to_pydantic(item, item_type) if isinstance(item, dict) else item
+                                dict_to_pydantic(item, _as_pydantic_model_type(item_type)) if isinstance(item, dict) else item
                                 for item in item_list
                             ]
                         else:
@@ -471,8 +479,12 @@ def dict_to_pydantic(data: Dict[str, Any], model_class: Type[BaseModel]) -> Base
                     else:
                         # 单个 item：{'item': value}，包装成列表
                         single_item = value["item"]
-                        if isinstance(item_type, type) and issubclass(item_type, BaseModel):
-                            cleaned_data[key] = [dict_to_pydantic(single_item, item_type) if isinstance(single_item, dict) else single_item]
+                        if _is_pydantic_model_type(item_type):
+                            cleaned_data[key] = [
+                                dict_to_pydantic(single_item, _as_pydantic_model_type(item_type))
+                                if isinstance(single_item, dict)
+                                else single_item
+                            ]
                         else:
                             cleaned_data[key] = [single_item]
                 else:
@@ -486,9 +498,9 @@ def dict_to_pydantic(data: Dict[str, Any], model_class: Type[BaseModel]) -> Base
                 args = get_args(field_type)
                 item_type = args[0] if args else Any
                 # 如果列表元素是 Pydantic 模型，递归转换
-                if isinstance(item_type, type) and issubclass(item_type, BaseModel):
+                if _is_pydantic_model_type(item_type):
                     cleaned_data[key] = [
-                        dict_to_pydantic(item, item_type) if isinstance(item, dict) else item
+                        dict_to_pydantic(item, _as_pydantic_model_type(item_type)) if isinstance(item, dict) else item
                         for item in value
                     ]
                 else:
@@ -515,16 +527,16 @@ def dict_to_pydantic(data: Dict[str, Any], model_class: Type[BaseModel]) -> Base
                     item_type = args[0] if args else Any
                     
                     # 如果列表元素是 Pydantic 模型，递归转换
-                    if isinstance(item_type, type) and issubclass(item_type, BaseModel):
+                    if _is_pydantic_model_type(item_type):
                         cleaned_data[key] = [
-                            dict_to_pydantic(item, item_type) if isinstance(item, dict) else item
+                            dict_to_pydantic(item, _as_pydantic_model_type(item_type)) if isinstance(item, dict) else item
                             for item in item_list
                         ]
                     else:
                         cleaned_data[key] = item_list
-                elif field_type and isinstance(field_type, type) and issubclass(field_type, BaseModel):
+                elif field_type and _is_pydantic_model_type(field_type):
                     # 递归转换嵌套的 Pydantic 模型
-                    cleaned_data[key] = dict_to_pydantic(value, field_type)
+                    cleaned_data[key] = dict_to_pydantic(value, _as_pydantic_model_type(field_type))
                 else:
                     cleaned_data[key] = value
             else:
@@ -573,4 +585,3 @@ def dict_to_pydantic(data: Dict[str, Any], model_class: Type[BaseModel]) -> Base
             return model_class.model_validate(data)
         except Exception:
             raise ValueError(f"无法将字典转换为 Pydantic 模型: {str(e)}") from e
-

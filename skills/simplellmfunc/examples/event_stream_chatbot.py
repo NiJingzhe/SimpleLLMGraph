@@ -339,8 +339,7 @@ async def chatbot_with_event_ui(
         llm_interface=llm_interface,
         toolkit=[calculate, get_weather, search_knowledge],
         stream=True,
-        enable_event=True,  # 🔑 启用事件流
-        temperature=1.0,
+            temperature=1.0,
     )
     async def chat(
         user_message: str,

@@ -8,6 +8,7 @@ from typing import Any, cast
 import pytest
 
 from SimpleLLMFunc.builtin.file_tools import FileToolset, STALE_FILE_MESSAGE
+from SimpleLLMFunc.type.multimodal import ImgPath
 
 
 def _write(path: Path, content: str) -> None:
@@ -28,7 +29,7 @@ def test_workspace_must_be_existing_directory(tmp_path: Path) -> None:
 def test_toolset_exposes_expected_tools(tmp_path: Path) -> None:
     toolset = FileToolset(tmp_path).toolset
     names = [tool.name for tool in toolset]
-    assert names == ["read_file", "grep", "sed", "echo_into"]
+    assert names == ["read_file", "read_image", "grep", "sed", "echo_into"]
 
 
 def test_toolset_injects_workspace_prompt(tmp_path: Path) -> None:
@@ -103,6 +104,40 @@ async def test_read_file_handles_empty_file(tmp_path: Path) -> None:
 
     assert "from line 1 to line 0" in output
     assert "```text\n```" in output
+
+
+@pytest.mark.asyncio
+async def test_read_image_returns_high_detail_img_path(tmp_path: Path) -> None:
+    path = tmp_path / "chart.png"
+    path.write_bytes(b"")
+
+    toolset = FileToolset(tmp_path)
+    result = await toolset.read_image("chart.png")
+
+    assert isinstance(result, ImgPath)
+    assert result.path == path
+    assert result.detail == "high"
+    assert path in toolset._file_hashes
+
+
+@pytest.mark.asyncio
+async def test_read_image_rejects_non_image_files(tmp_path: Path) -> None:
+    path = tmp_path / "notes.txt"
+    _write(path, "hello")
+
+    toolset = FileToolset(tmp_path)
+    result = await toolset.read_image("notes.txt")
+
+    assert result == "Unsupported image format: .txt"
+
+
+@pytest.mark.asyncio
+async def test_read_image_reuses_workspace_path_guards(tmp_path: Path) -> None:
+    hidden = tmp_path / ".secret.png"
+    hidden.write_bytes(b"")
+
+    toolset = FileToolset(tmp_path)
+    assert await toolset.read_image(".secret.png") == "hidden files are not allowed"
 
 
 @pytest.mark.asyncio

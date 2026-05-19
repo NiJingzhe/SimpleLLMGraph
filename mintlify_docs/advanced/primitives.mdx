@@ -1,0 +1,165 @@
+---
+title: Runtime Primitives
+description: Extend the agent runtime with custom PrimitivePacks
+---
+
+# Runtime Primitives
+
+Primitives are functions callable from inside `execute_code` (PyRepl) as `runtime.<namespace>.<name>(...)`. They let tools access agent-level capabilities without breaking the tool boundary.
+
+## Concepts
+
+| Concept | What It Is |
+|---------|-----------|
+| **PrimitivePack** | A named collection of related primitives + a backend |
+| **RuntimePrimitiveBackend** | The stateful object a pack wraps (e.g., SelfReference) |
+| **@primitive** | Decorator that registers a function as a callable primitive |
+| **PrimitiveSpec** | The contract exposed to the model (name, description, parameters, best practices) |
+| **PrimitiveCallContext** | Runtime context passed to primitive handlers |
+
+## Built-in: SelfRef Pack
+
+The framework ships with one built-in pack — `selfref` — providing 6 primitives:
+
+```
+runtime.selfref.context.inspect()
+runtime.selfref.context.remember(text)
+runtime.selfref.context.forget(experience_id)
+runtime.selfref.context.compact(goal, instruction, ...)
+runtime.selfref.fork.spawn(task, instruction, ...)
+runtime.selfref.fork.gather_all(include_history=False)
+```
+
+## Creating a Custom Pack
+
+### 1. Define a Backend
+
+```python
+from SimpleLLMFunc.runtime import RuntimePrimitiveBackend
+
+
+class MetricsBackend(RuntimePrimitiveBackend):
+    def __init__(self):
+        self.counters: dict[str, int] = {}
+
+    def increment(self, name: str, amount: int = 1) -> int:
+        self.counters[name] = self.counters.get(name, 0) + amount
+        return self.counters[name]
+
+    def get_all(self) -> dict[str, int]:
+        return dict(self.counters)
+```
+
+### 2. Define Primitives
+
+```python
+from SimpleLLMFunc.runtime import primitive, PrimitiveCallContext
+
+
+@primitive
+async def increment_counter(
+    ctx: PrimitiveCallContext,
+    name: str,
+    amount: int = 1,
+) -> dict:
+    """
+    Increment a named counter and return its new value.
+
+    Args:
+        name: Counter name.
+        amount: How much to add. Default 1.
+
+    Returns:
+        Dict with counter name and new value.
+
+    Best Practices:
+        - Use descriptive counter names (e.g., "files_processed", "errors_found").
+        - Use this to track progress across tool calls.
+    """
+    backend: MetricsBackend = ctx.backend
+    new_value = backend.increment(name, amount)
+    return {"name": name, "value": new_value}
+
+
+@primitive
+async def get_metrics(ctx: PrimitiveCallContext) -> dict:
+    """
+    Get all current counter values.
+
+    Returns:
+        Dict of all counter names to their current values.
+
+    Best Practices:
+        - Call this to report progress summaries.
+        - Useful before context compaction to record final metrics.
+    """
+    backend: MetricsBackend = ctx.backend
+    return backend.get_all()
+```
+
+<Warning>
+Primitive docstrings **must** include a `Best Practices` section. Registration fails without it.
+</Warning>
+
+### 3. Build the Pack
+
+```python
+from SimpleLLMFunc.runtime import PrimitivePack
+
+metrics_pack = PrimitivePack(
+    namespace="metrics",
+    backend=MetricsBackend(),
+    primitives=[increment_counter, get_metrics],
+    guide={
+        "namespace": "metrics",
+        "overview": "Track numeric counters across tool calls.",
+        "best_practices": {
+            "when_to_use": "To track progress, count occurrences, or measure work done.",
+            "pattern": "Increment during work, get_metrics at milestones.",
+        },
+    },
+)
+```
+
+### 4. Install in PyRepl
+
+```python
+from SimpleLLMFunc.builtin import PyRepl
+
+repl = PyRepl()
+repl.install_primitive_pack(metrics_pack)
+```
+
+Now the model can call:
+```python
+runtime.metrics.increment_counter("files_read")
+runtime.metrics.get_metrics()
+```
+
+## Discoverability
+
+The model discovers primitives through built-in meta-primitives:
+
+```python
+runtime.list_primitives()              # All available primitive names
+runtime.get_primitive_spec("metrics.increment_counter")  # Full contract
+runtime.list_backends()                # Installed backend packs
+```
+
+The spec includes parameter descriptions, return type, and best practices — enough for the model to use the primitive correctly without prior training.
+
+## PrimitiveCallContext
+
+Every primitive handler receives a context object:
+
+```python
+@dataclass
+class PrimitiveCallContext:
+    backend: RuntimePrimitiveBackend   # The pack's backend instance
+    fork_context: Optional[ForkContext]  # Fork info (if inside a fork)
+    event_emitter: ToolEventEmitter    # Emit custom events
+```
+
+Use `ctx.event_emitter` to stream progress from long-running primitives.
+
+→ [API Reference: Runtime](/api/runtime)

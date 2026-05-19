@@ -35,7 +35,6 @@ repl = PyRepl()
     llm_interface=llm,
     toolkit=[*repl.toolset],
     stream=True,
-    enable_event=True,
 )
 async def agent(message: str, history: HistoryList):
     """You are a practical coding assistant.

@@ -108,8 +108,8 @@ def process_tools(
             _process_decorated_function(tool, func_name, tool_objects, tool_map)
         else:
             push_warning(
-                f"LLM 函数 '{func_name}': 不支持的工具类型 {type(tool)}，"
-                "工具必须是 Tool 对象或被 @tool 装饰的函数",
+                f"LLM function '{func_name}': unsupported tool type {type(tool)}; "
+                "tools must be Tool instances or functions decorated with @tool",
                 location=get_location(),
             )
 
@@ -119,7 +119,7 @@ def process_tools(
     )
 
     push_debug(
-        f"LLM 函数 '{func_name}' 加载了 {len(tool_objects)} 个工具",
+        f"LLM function '{func_name}' loaded {len(tool_objects)} tools",
         location=get_location(),
     )
 

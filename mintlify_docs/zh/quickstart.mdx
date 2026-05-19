@@ -1,0 +1,111 @@
+---
+title: 快速入门
+description: 5 分钟内从零到一个可运行的 LLM 函数调用
+---
+
+# 快速入门
+
+## 安装
+
+```bash
+pip install SimpleLLMFunc
+```
+
+或使用 Poetry：
+
+```bash
+poetry add SimpleLLMFunc
+```
+
+## 配置模型
+
+在项目根目录创建 `provider.json`：
+
+```json
+{
+  "openrouter": [
+    {
+      "model_name": "openai/gpt-4o",
+      "api_keys": ["sk-your-key"],
+      "base_url": "https://openrouter.ai/api/v1",
+      "max_retries": 3,
+      "retry_delay": 1.0,
+      "rate_limit_capacity": 20,
+      "rate_limit_refill_rate": 3.0
+    }
+  ]
+}
+```
+
+支持任何 OpenAI 兼容端点——OpenRouter、Together、本地 vLLM 等。
+
+## 第一个 LLM 函数
+
+```python
+import asyncio
+from pydantic import BaseModel, Field
+from SimpleLLMFunc import OpenAICompatible, llm_function
+
+
+class Summary(BaseModel):
+    headline: str = Field(description="一句话摘要")
+    key_points: list[str] = Field(description="3-5 个要点")
+    tone: str = Field(description="formal、casual 或 technical")
+
+
+models = OpenAICompatible.load_from_json_file("provider.json")
+llm = models["openrouter"]["openai/gpt-4o"]
+
+
+@llm_function(llm_interface=llm)
+async def summarize(text: str) -> Summary:
+    """
+    简洁地总结输入文本。
+    重点关注最有价值的信息。
+    """
+    pass
+
+
+async def main():
+    result = await summarize("SimpleLLMFunc 将每次 LLM 调用视为类型化的 Python 函数...")
+    print(result.headline)
+    print(result.key_points)
+
+
+asyncio.run(main())
+```
+
+就是这么简单。装饰器会：
+1. 从文档字符串 + 参数类型 + 返回类型 schema 构建系统提示词
+2. 将函数参数作为用户消息发送
+3. 将 LLM 响应解析为你的 Pydantic 模型
+
+无需消息列表，无需 JSON mode 标志，无需输出解析器。
+
+## 直接构造（无需 provider.json）
+
+快速脚本可以直接构造模型：
+
+```python
+from SimpleLLMFunc import APIKeyPool, OpenAICompatible
+
+llm = OpenAICompatible(
+    api_key_pool=APIKeyPool(
+        api_keys=["sk-your-key"],
+        provider_id="openai",
+    ),
+    model_name="gpt-4o",
+    base_url="https://api.openai.com/v1",
+)
+```
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="构建工具调用 Agent" icon="wrench" href="/zh/first-agent">
+    添加工具，看 ReAct 循环如何运作。
+  </Card>
+  <Card title="构建多轮对话" icon="comments" href="/zh/first-chat">
+    历史管理、流式输出和有状态对话。
+  </Card>
+</CardGroup>

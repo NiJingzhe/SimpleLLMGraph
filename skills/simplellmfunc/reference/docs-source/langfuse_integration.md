@@ -130,6 +130,7 @@ result = await math_assistant("计算 15 * 8 + 32 的结果")
 
 ```python
 from SimpleLLMFunc import llm_chat
+from SimpleLLMFunc.hooks.stream import is_response_yield
 
 @llm_chat(
     llm_interface=llm,
@@ -142,10 +143,11 @@ async def chat_bot(message: str, history: list = None):
 
 # 使用 - 每轮对话都会被追踪
 history = []
-async for response, updated_history in chat_bot("你好，请帮我计算一些数学题", history):
-    if response.strip():
-        print(response)
-history = updated_history
+async for output in chat_bot("你好，请帮我计算一些数学题", history):
+    if is_response_yield(output):
+        if str(output.response).strip():
+            print(output.response)
+        history = output.messages
 ```
 
 ## 追踪数据结构

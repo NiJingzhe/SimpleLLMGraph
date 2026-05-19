@@ -60,22 +60,16 @@ def _default_origin() -> EventOrigin:
 
 @dataclass
 class ResponseYield:
-    """响应 yield - 保持现有 API
+    """Response item emitted by the event stream."""
 
-    当 enable_event=True 时，响应通过此类型 yield 出来。
-    """
-
-    response: Union[LLMResponse, LLMStreamChunk, str]  # 根据 return_mode 决定
+    response: Union[LLMResponse, LLMStreamChunk, str]
     messages: MessageList
     type: Literal["response"] = "response"  # 放在最后，因为有默认值
 
 
 @dataclass
 class EventYield:
-    """事件 yield - 新增功能
-
-    当 enable_event=True 时，事件通过此类型 yield 出来。
-    """
+    """Event item emitted by the event stream."""
 
     event: ReActEvent
     origin: EventOrigin = field(default_factory=_default_origin)
@@ -185,7 +179,7 @@ def with_event_observer(
 
     使用示例：
         @with_event_observer(my_observer)
-        @llm_chat(llm_interface=my_llm, enable_event=True)
+        @llm_chat(llm_interface=my_llm)
         async def my_chat(message: str):
             pass
 

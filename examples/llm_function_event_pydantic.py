@@ -33,7 +33,6 @@ class MovieReview(BaseModel):
 
 @llm_function(
     llm_interface=llm,
-    enable_event=True,
 )
 async def analyze_movie_review(review_text: str) -> MovieReview:
     """
@@ -63,7 +62,7 @@ async def main():
 
     total_tokens = 0
 
-    async for output in analyze_movie_review(review_text=review):
+    async for output in analyze_movie_review.stream(review_text=review):
         if is_response_yield(output):
             # output.response 现在是解析后的 Pydantic 对象
             result: MovieReview = output.response  # type: ignore

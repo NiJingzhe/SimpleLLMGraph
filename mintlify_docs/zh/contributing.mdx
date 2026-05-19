@@ -1,0 +1,88 @@
+---
+title: 贡献指南
+description: 如何为 SimpleLLMFunc 做贡献
+---
+
+# 贡献指南
+
+## 开发环境搭建
+
+```bash
+git clone https://github.com/NiJingzhe/SimpleLLMFunc.git
+cd SimpleLLMFunc
+poetry install
+```
+
+## 运行测试
+
+```bash
+# 运行所有测试
+poetry run pytest
+
+# 运行指定测试文件
+poetry run pytest tests/test_base/test_react_core_scheduler.py
+
+# 显示详细输出
+poetry run pytest -v
+```
+
+## 项目结构
+
+```
+SimpleLLMFunc/
+├── SimpleLLMFunc/          # 源代码
+│   ├── llm_decorator/     # L1：装饰器层
+│   ├── base/              # L2+L3：编译边界 + ReAct 运行时
+│   ├── runtime/           # 运行时原语 + selfref
+│   ├── builtin/           # PyRepl、FileToolset、SelfReference
+│   ├── hooks/             # 事件、流、中止
+│   ├── interface/         # LLM 适配器
+│   ├── tool/              # @tool 装饰器
+│   └── utils/             # TUI、stdio
+├── tests/                 # 与源码结构对应的测试
+├── examples/              # 可运行示例
+├── mintlify_docs/         # 本文档
+└── spec/                  # 架构规范
+```
+
+## 开发工作流
+
+1. 在修改代码前，先阅读相关的源码和测试
+2. 先编写或更新测试（TDD 方式）
+3. 做最小且连贯的改动
+4. 先运行针对性测试，再运行更广泛的测试
+5. 如果用户可见的行为发生了变化，请更新文档
+
+## 关键规则
+
+- 所有被装饰的函数必须是 `async def`
+- Runtime 副作用必须通过内部补丁边界流转，绝不能直接修改 live messages
+- 运行时原语的文档字符串必须包含 `Best Practices` 部分
+- 测试结构与源码结构对应：`SimpleLLMFunc/base/react_loop.py` → `tests/test_base/test_react_loop.py`
+
+## 代码风格
+
+- Python 3.12+
+- PEP 8 格式规范
+- 公共 API 必须添加类型注解
+- 函数使用 snake_case，类使用 PascalCase，常量使用 UPPER_SNAKE_CASE
+
+## 文档
+
+- 英文文档位于 `mintlify_docs/`（根目录）
+- 中文翻译单独提交（单独 PR）
+- 保持示例可运行，导入路径保持最新
+
+## 提交 Pull Request
+
+1. Fork 本仓库
+2. 从 `dev` 分支创建特性分支
+3. 进行修改并添加测试
+4. 向 `dev` 分支提交 PR
+5. 描述修改了什么以及为什么修改
+
+## Issue
+
+- 使用 GitHub Issues 提交 Bug 和功能请求
+- 请包含：期望行为、实际行为、最小复现步骤
+- 合理使用标签：`bug`、`feature`、`docs`、`refactor`

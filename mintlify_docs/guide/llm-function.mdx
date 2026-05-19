@@ -1,0 +1,182 @@
+---
+title: "@llm_function"
+description: Stateless typed LLM calls — one function, one result
+---
+
+# @llm_function
+
+`@llm_function` turns a Python function signature into a complete LLM call. One input, one typed output. No history, no tools (or tools with auto-loop), no state management.
+
+## Basic Usage
+
+```python
+from pydantic import BaseModel, Field
+from SimpleLLMFunc import OpenAICompatible, llm_function
+
+models = OpenAICompatible.load_from_json_file("provider.json")
+llm = models["openrouter"]["openai/gpt-4o"]
+
+
+class Translation(BaseModel):
+    text: str = Field(description="The translated text")
+    confidence: float = Field(description="0.0-1.0 translation confidence")
+
+
+@llm_function(llm_interface=llm)
+async def translate(text: str, target_language: str) -> Translation:
+    """
+    Translate the text to the target language.
+    Preserve tone and intent. If uncertain about a phrase, lower confidence.
+    """
+    pass
+
+
+result = await translate("Hello world", "French")
+# Translation(text="Bonjour le monde", confidence=0.95)
+```
+
+## How the System Prompt Is Built
+
+Your docstring is the starting point, but the framework augments it:
+
+1. **Your docstring** → task policy, quality bar, constraints
+2. **Parameter types** → automatically described for the model
+3. **Return type schema** → output format instructions (XML-based structured extraction)
+4. **Tool best practices** → prepended if tools are mounted
+
+You write what the model should DO. The framework handles what the model should OUTPUT.
+
+## Return Types
+
+### Pydantic Models (recommended for structured output)
+
+```python
+@llm_function(llm_interface=llm)
+async def analyze(review: str) -> ProductReview:
+    """Analyze the product review..."""
+    pass
+```
+
+The framework generates an XML schema from the Pydantic model and instructs the model to produce matching output. Parsing is automatic.
+
+### Plain str (for free-form text)
+
+```python
+@llm_function(llm_interface=llm)
+async def write_poem(topic: str) -> str:
+    """Write a short poem about the topic."""
+    pass
+```
+
+### Lists and nested types
+
+```python
+@llm_function(llm_interface=llm)
+async def extract_entities(text: str) -> list[Entity]:
+    """Extract all named entities."""
+    pass
+```
+
+### Primitive types
+
+```python
+@llm_function(llm_interface=llm)
+async def score(text: str) -> float:
+    """Rate quality from 0.0 to 1.0."""
+    pass
+```
+
+## Template Parameters
+
+Inject runtime values into the docstring:
+
+```python
+@llm_function(llm_interface=llm)
+async def answer(question: str, context: str) -> str:
+    """
+    Answer the question using the provided context.
+
+    Domain: {domain}
+    Style: {style}
+    """
+    pass
+
+result = await answer(
+    "What is X?",
+    "X is a framework...",
+    _template_params={"domain": "software engineering", "style": "concise"},
+)
+```
+
+## With Tools
+
+`@llm_function` can use tools via a ReAct loop:
+
+```python
+@llm_function(llm_interface=llm, toolkit=[search_tool], max_tool_calls=5)
+async def research(question: str) -> ResearchReport:
+    """Research the question using search. Cite your sources."""
+    pass
+```
+
+The function still returns a single typed result, but internally the model may call tools multiple times before producing the final answer.
+
+`max_tool_calls` limits how many tool calls the model can make. `None` means unlimited.
+
+## Event Stream Mode
+
+`@llm_function` returns an `LLMFunction` callable instance. Normal calls use `await fn(...)`; use `fn.stream(...)` for `ReactOutput`:
+
+```python
+from SimpleLLMFunc.hooks import is_response_yield, is_event_yield
+
+async for output in translate.stream("hello", "French"):
+    if is_response_yield(output):
+        result = output.response  # The typed Translation object
+    elif is_event_yield(output):
+        # LLM events, tool events, etc.
+        pass
+```
+
+For simple usage, collect the final response:
+
+```python
+from SimpleLLMFunc.hooks import responses_only
+
+async for response in responses_only(translate.stream("hello", "French")):
+    result = response.response
+```
+
+## AbortSignal
+
+Cancel a running call:
+
+```python
+from SimpleLLMFunc.hooks import AbortSignal
+
+signal = AbortSignal()
+
+async def run():
+    async for output in translate.stream("...", "French", _abort_signal=signal):
+        ...
+
+# From another task:
+signal.abort("timeout")
+```
+
+## Parameters Reference
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `llm_interface` | `LLM_Interface` | required | The model to call |
+| `toolkit` | `List[Tool]` | `None` | Tools the model can use |
+| `max_tool_calls` | `int \| None` | `None` | Max tool calls before forcing final answer |
+| `system_prompt_template` | `str \| None` | `None` | Override system prompt template |
+| `user_prompt_template` | `str \| None` | `None` | Override user prompt template |
+| `**llm_kwargs` | `Any` | — | Passed to the LLM (temperature, etc.) |
+
+Special call-time parameters (prefixed with `_`):
+- `_template_params: Dict[str, Any]` — template values for docstring formatting
+- `_abort_signal: AbortSignal` — cancellation signal
+
+→ [API Reference: Decorators](/api/decorators)

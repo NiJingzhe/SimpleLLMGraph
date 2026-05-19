@@ -23,12 +23,12 @@
 
 ## 装饰器用法
 
-> ⚠️ **重要说明**：`llm_chat` 只能装饰 `async def` 定义的异步函数，调用后返回 **异步生成器**；请使用 `async for` 消费输出。
+> ⚠️ **重要说明**：`llm_chat` 只能装饰 `async def` 定义的异步函数。装饰后得到的是 `LLMChat` callable instance；调用它会返回 **异步生成器**，请使用 `async for` 消费 `ReactOutput`。
 
 ### 基本语法
 
 ```python
-from typing import AsyncGenerator, List, Dict, Tuple
+from typing import List, Dict
 from SimpleLLMFunc import llm_chat
 
 @llm_chat(
@@ -43,7 +43,7 @@ from SimpleLLMFunc import llm_chat
 async def your_chat_function(
     message: str,
     history: List[Dict[str, str]] | None = None,
-) -> AsyncGenerator[Tuple[str, List[Dict[str, str]]], None]:
+):
     """
     Describe assistant role and behavior here.
     This docstring is used as the system prompt.
@@ -59,13 +59,6 @@ async def your_chat_function(
 - **toolkit** (可选): 工具列表，可以是 Tool 对象或被 @tool 装饰的函数
 - **max_tool_calls** (可选): 最大工具调用次数；默认为 `None`，表示框架不主动施加工具调用上限。如需更严格保护，请显式传入较小整数。
 - **stream** (可选): 是否启用流式模式，默认为 False
-- **return_mode** (可选): 返回模式，可选值为 "text"（默认）或 "raw"。
-  - 仅在 `enable_event=False` 时生效
-  - 当 `enable_event=True` 时，`ResponseYield.response` 始终为原始响应对象或流式 chunk
-- **enable_event** (可选): 是否启用事件流，默认为 False
-  - `False`: 返回 `(response, messages)` 元组（向后兼容模式）
-  - `True`: 返回 `ReactOutput`（`ResponseYield` 或 `EventYield`）
-  - 详细说明请参考 [事件流文档](event_stream.md)
 - **strict_signature** (可选): 当为 True 时强制 `agent(history, message: str, _template_params=None)` 规范签名
 - **self_reference** (可选): 共享的 `SelfReference` 实例；若未显式传入，`llm_chat` 会从 `PyRepl` runtime backend 中自动探测
 - **self_reference_key** (可选): 本聊天函数的记忆键，默认为函数名
@@ -93,21 +86,16 @@ async for output in your_chat_function(
 abort_signal.abort("user_interrupt")
 ```
 
-当 `enable_event=True` 时，`ReactEndEvent.extra` 会包含 `aborted: true` 和可选的 `abort_reason`。
 详见 [中断与取消](abort.md)。
 
 ### 返回值
 
-当 `enable_event=False`（默认）时，`llm_chat` 装饰的函数返回一个异步生成器，每次迭代返回：
+`llm_chat` 装饰后得到 `LLMChat` callable instance。调用该对象返回异步生成器，每次迭代产生 `ReactOutput`：
 
-- `chunk` (str): 响应内容的一部分（流式模式）或完整响应（非流式）
-- `updated_history` (List[Dict[str, str]]): 更新后的对话历史
-
-> 提示：当 `stream=True` 且 `return_mode="text"` 时，流结束会额外 yield 一个空字符串作为结束标记。
-
-当 `enable_event=True` 时，返回 `ReactOutput`，可以是：
 - `ResponseYield`: 包含响应和消息列表
 - `EventYield`: 包含 ReAct 循环中的事件（如工具调用开始/结束、LLM 调用等）
+
+请用 `is_response_yield(output)` / `is_event_yield(output)` 区分输出类型，不要按旧版 `(chunk, history)` 元组消费。
 
 > 注意：历史参数名应为 `history` 或 `chat_history`。若未提供符合格式的历史，框架会忽略历史并发出警告。若历史中包含 `system` 消息，最新的 `system` 会覆盖 DocString 作为系统提示，其余 `system` 会被过滤。
 
@@ -121,6 +109,7 @@ abort_signal.abort("user_interrupt")
 import asyncio
 from typing import AsyncGenerator, Dict, List, Tuple
 from SimpleLLMFunc import llm_chat, OpenAICompatible
+from SimpleLLMFunc.hooks.stream import is_response_yield
 
 # 初始化 LLM 接口
 llm = OpenAICompatible.load_from_json_file("provider.json")["openai"]["gpt-3.5-turbo"]
@@ -130,7 +119,7 @@ llm = OpenAICompatible.load_from_json_file("provider.json")["openai"]["gpt-3.5-t
 async def simple_chat(
     message: str,
     history: List[Dict[str, str]] | None = None,
-) -> AsyncGenerator[Tuple[str, List[Dict[str, str]]], None]:
+):
     """你是一个友好的聊天助手，善于回答各种问题。"""
     pass
 
@@ -143,10 +132,10 @@ async def main():
     print("助手: ", end="", flush=True)
 
     # 流式获取响应
-    async for chunk, updated_history in simple_chat(user_message, history):
-        if chunk:
-            print(chunk, end="", flush=True)
-        history = updated_history
+    async for output in simple_chat(user_message, history):
+        if is_response_yield(output):
+            print(output.response, end="", flush=True)
+            history = output.messages
 
     print()  # 换行
 
@@ -161,6 +150,7 @@ asyncio.run(main())
 import asyncio
 from typing import AsyncGenerator, Dict, List, Tuple
 from SimpleLLMFunc import llm_chat, tool, OpenAICompatible
+from SimpleLLMFunc.hooks.stream import is_response_yield
 
 # 定义工具
 @tool(name="get_weather", description="获取指定城市的天气信息")
@@ -190,7 +180,7 @@ llm = OpenAICompatible.load_from_json_file("provider.json")["openai"]["gpt-3.5-t
 async def weather_chat(
     message: str,
     history: List[Dict[str, str]] | None = None,
-) -> AsyncGenerator[Tuple[str, List[Dict[str, str]]], None]:
+):
     """
     你是一个天气助手，可以查询城市天气信息。
     当用户询问天气时，使用 get_weather 工具来获取实时信息。
@@ -205,10 +195,10 @@ async def main():
     print(f"用户: {query}")
     print("助手: ", end="", flush=True)
 
-    async for chunk, updated_history in weather_chat(query, history):
-        if chunk:
-            print(chunk, end="", flush=True)
-        history = updated_history
+    async for output in weather_chat(query, history):
+        if is_response_yield(output):
+            print(output.response, end="", flush=True)
+            history = output.messages
 
     print()
 
@@ -223,6 +213,7 @@ asyncio.run(main())
 import asyncio
 from typing import AsyncGenerator, Dict, List, Tuple
 from SimpleLLMFunc import llm_chat, OpenAICompatible
+from SimpleLLMFunc.hooks.stream import is_response_yield
 
 llm = OpenAICompatible.load_from_json_file("provider.json")["openai"]["gpt-3.5-turbo"]
 
@@ -230,7 +221,7 @@ llm = OpenAICompatible.load_from_json_file("provider.json")["openai"]["gpt-3.5-t
 async def multi_turn_chat(
     message: str,
     history: List[Dict[str, str]] | None = None,
-) -> AsyncGenerator[Tuple[str, List[Dict[str, str]]], None]:
+):
     """你是一个专业的编程助手，精通 Python 和 JavaScript。"""
     pass
 
@@ -254,11 +245,12 @@ async def interactive_chat_session():
         print("助手: ", end="", flush=True)
 
         response_text = ""
-        async for chunk, updated_history in multi_turn_chat(user_input, history):
-            if chunk:
-                print(chunk, end="", flush=True)
-                response_text += chunk
-            history = updated_history
+        async for output in multi_turn_chat(user_input, history):
+            if is_response_yield(output):
+                text = str(output.response or "")
+                print(text, end="", flush=True)
+                response_text += text
+                history = output.messages
 
         print("\n")
 
@@ -276,10 +268,10 @@ async def demo():
         print(f"\n用户: {user_message}")
         print("助手: ", end="", flush=True)
 
-        async for chunk, updated_history in multi_turn_chat(user_message, history):
-            if chunk:
-                print(chunk, end="", flush=True)
-            history = updated_history
+        async for output in multi_turn_chat(user_message, history):
+            if is_response_yield(output):
+                print(output.response, end="", flush=True)
+                history = output.messages
 
         print()
 
@@ -360,7 +352,6 @@ Runtime self-reference 原语参考：
 读取结果时先检查 `status`，成功后读取 `response` 或 `result`，失败时检查 `error_type` / `error_message`。
 确实需要完整子历史时，再显式使用 `include_history=True`。
 
-当 `enable_event=True` 时，你可以通过 origin 元数据区分主链路事件与 fork 事件：
 
 ```python
 from SimpleLLMFunc.hooks import is_event_yield
@@ -383,19 +374,15 @@ async for output in agent("analyze and split"):
 
 ### 返回模式
 
-`return_mode` 参数控制返回的数据类型：
 
-> 提示：`return_mode` 仅在 `enable_event=False` 时生效；事件流模式始终返回原始响应对象或流式 chunk。
 
 ```python
 # 返回文本（默认）
-@llm_chat(llm_interface=llm, stream=True, return_mode="text")
 async def text_mode_chat(message: str, history=None):
     """聊天函数"""
     pass
 
 # 返回原始响应对象（用于获取 token 使用量等详细信息）
-@llm_chat(llm_interface=llm, stream=True, return_mode="raw")
 async def raw_mode_chat(message: str, history=None):
     """聊天函数"""
     pass
@@ -426,10 +413,10 @@ async def concurrent_chats():
         history = []
         results = []
 
-        async for chunk, updated_history in chat(session["message"], history):
-            if chunk:
-                results.append(chunk)
-            history = updated_history
+        async for output in chat(session["message"], history):
+            if is_response_yield(output):
+                results.append(str(output.response or ""))
+                history = output.messages
 
         return session["user_id"], "".join(results)
 
@@ -452,10 +439,10 @@ asyncio.run(concurrent_chats())
 async def robust_chat():
     history = []
     try:
-        async for chunk, updated_history in multi_turn_chat("测试", history):
-            if chunk:
-                print(chunk, end="", flush=True)
-            history = updated_history
+        async for output in multi_turn_chat("测试", history):
+            if is_response_yield(output):
+                print(output.response, end="", flush=True)
+                history = output.messages
     except Exception as e:
         print(f"聊天出错: {e}")
 ```
@@ -467,10 +454,10 @@ async def chat_with_timeout():
     history = []
     try:
         async with asyncio.timeout(30):  # Python 3.11+
-            async for chunk, updated_history in multi_turn_chat("测试", history):
-                if chunk:
-                    print(chunk, end="", flush=True)
-                history = updated_history
+            async for output in multi_turn_chat("测试", history):
+                if is_response_yield(output):
+                    print(output.response, end="", flush=True)
+                    history = output.messages
     except asyncio.TimeoutError:
         print("聊天超时")
 ```
@@ -497,10 +484,10 @@ async def chat_with_limited_history():
         # 限制历史记录
         history = trim_history(history)
 
-        async for chunk, updated_history in multi_turn_chat(msg, history):
-            if chunk:
-                print(chunk, end="", flush=True)
-            history = updated_history
+        async for output in multi_turn_chat(msg, history):
+            if is_response_yield(output):
+                print(output.response, end="", flush=True)
+                history = output.messages
         print()
 
 asyncio.run(chat_with_limited_history())
@@ -523,7 +510,7 @@ logger.setLevel(logging.DEBUG)
 
 事件流是 SimpleLLMFunc v0.5.0+ 引入的高级特性，允许你实时观察 ReAct 循环的完整执行过程。
 
-通过设置 `enable_event=True`，你可以：
+通过消费 `ReactOutput` 事件流，你可以：
 
 - **实时监控**：观察 LLM 调用、工具调用的实时状态
 - **性能分析**：获取详细的执行统计和性能指标
@@ -533,7 +520,7 @@ logger.setLevel(logging.DEBUG)
 **基本用法**：
 
 ```python
-@llm_chat(llm_interface=llm, enable_event=True)
+@llm_chat(llm_interface=llm)
 async def chat(message: str, history=None):
     """智能助手"""
     pass
@@ -588,10 +575,10 @@ async def robust_chat_with_retry():
     for attempt in range(max_retries):
         try:
             collected = ""
-            async for chunk, updated_history in multi_turn_chat("测试", history):
-                if chunk:
-                    collected += chunk
-                history = updated_history
+            async for output in multi_turn_chat("测试", history):
+                if is_response_yield(output):
+                    collected += str(output.response or "")
+                    history = output.messages
 
             if collected.strip():
                 print(f"成功: {collected}")

@@ -17,7 +17,7 @@
 
 ## 重要说明
 
-> ⚠️ `llm_function` 只能装饰 `async def` 定义的异步函数，返回的也是可 `await` 的协程；请在异步上下文中调用，或在脚本入口使用 `asyncio.run()`。
+> ⚠️ `llm_function` 只能装饰 `async def` 定义的异步函数。装饰后得到的是 `LLMFunction` callable instance；普通调用仍然通过 `await your_function(...)` 返回解析后的结果，事件流请用 `your_function.stream(...)`。
 
 
 ## 装饰器用法
@@ -49,16 +49,11 @@ async def your_function(param1: Type1, param2: Type2) -> ReturnType:
 - **max_tool_calls** (可选): 最大工具调用次数；默认为 `None`，表示框架不主动施加工具调用上限。如需更严格保护，请显式传入较小整数。
 - **system_prompt_template** (可选): 自定义系统提示模板
 - **user_prompt_template** (可选): 自定义用户提示模板
-- **enable_event** (可选): 是否启用事件流，默认为 False
-  - `False`: 正常执行，直接返回解析后的结果（向后兼容模式）
-  - `True`: 返回一个异步生成器，yield `ReactOutput`（`ResponseYield` 或 `EventYield`）
-  - 详细说明请参考 [事件流系统文档](event_stream.md)
 - ****llm_kwargs**: 额外的关键字参数，将直接传递给 LLM 接口（如 temperature、top_p 等）；可传入 `retry_times` 控制空响应重试次数（默认 2）
 
 ### 运行时中断（AbortSignal）
 
-通过 `_abort_signal` 传入 `AbortSignal`，可在运行中中断当前回合（停止流式输出并取消正在执行的工具调用）。
-当 `enable_event=True` 时可以用 `async for` 消费输出并随时触发中断；非事件流模式也可传入 `_abort_signal` 来提前终止 `await`。
+通过 `_abort_signal` 传入 `AbortSignal`，可在运行中中断当前回合（停止流式输出并取消正在执行的工具调用）。普通 `await your_function(...)` 和 `your_function.stream(...)` 都支持该参数。
 
 ```python
 import asyncio
@@ -73,8 +68,7 @@ async def run():
 
     asyncio.create_task(abort_later())
 
-    # 注意：your_function 需要 enable_event=True 才能用 async for 消费
-    async for output in your_function(
+    async for output in your_function.stream(
         param1,
         **{ABORT_SIGNAL_PARAM: abort_signal},
     ):
@@ -83,7 +77,7 @@ async def run():
 asyncio.run(run())
 ```
 
-当 `enable_event=True` 时，`ReactEndEvent.extra` 会包含 `aborted: true` 和可选的 `abort_reason`。
+事件流中的 `ReactEndEvent.extra` 会包含 `aborted: true` 和可选的 `abort_reason`。
 详见 [中断与取消](abort.md)。
 
 ### 自定义提示模板
@@ -590,9 +584,9 @@ asyncio.run(process_multiple_urls())
 
 ## 事件流使用
 
-`llm_function` 支持事件流，允许你实时观察函数执行过程中的 LLM 调用、Token 用量等信息。这对于性能监控、成本追踪和调试非常有用。
+`llm_function.stream(...)` 支持事件流，允许你实时观察函数执行过程中的 LLM 调用、Token 用量等信息。这对于性能监控、成本追踪和调试非常有用。
 
-> 注意：`llm_function` 本身不提供流式文本输出。即使启用事件流，`ResponseYield` 也只会在最终解析完成后返回一次结果。
+> 注意：`llm_function` 本身不提供流式文本输出。使用 `.stream(...)` 时，`ResponseYield` 也只会在最终解析完成后返回一次解析后的结果。
 
 ### 基本用法
 
@@ -601,16 +595,13 @@ from SimpleLLMFunc import llm_function
 from SimpleLLMFunc.hooks import ResponseYield, EventYield
 from SimpleLLMFunc.hooks.events import LLMCallEndEvent
 
-@llm_function(
-    llm_interface=llm,
-    enable_event=True,  # 🔑 启用事件流
-)
+@llm_function(llm_interface=llm)
 async def analyze_text(text: str) -> str:
     """分析文本并提供见解"""
     pass
 
 # 处理事件和响应
-async for output in analyze_text("Sample text"):
+async for output in analyze_text.stream("Sample text"):
     if isinstance(output, ResponseYield):
         # 获取最终结果（已解析为指定的返回类型）
         print(f"分析结果: {output.response}")
@@ -630,7 +621,7 @@ async for output in analyze_text("Sample text"):
 ```python
 total_tokens = 0
 
-async for output in summarize_text(text="长文本..."):
+async for output in summarize_text.stream(text="长文本..."):
     if isinstance(output, EventYield):
         event = output.event
         if isinstance(event, LLMCallEndEvent) and event.usage:

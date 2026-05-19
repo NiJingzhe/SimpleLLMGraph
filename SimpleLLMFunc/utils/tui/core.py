@@ -914,7 +914,7 @@ async def consume_react_stream(
 
     if not saw_event and not aborted:
         raise ValueError(
-            "TUI requires llm_chat(enable_event=True). No event stream was received."
+            "TUI requires a ReactOutput event stream. No EventYield output was received."
         )
 
     return state.final_history
