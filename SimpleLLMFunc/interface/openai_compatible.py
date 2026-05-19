@@ -2,7 +2,7 @@ from __future__ import annotations
 import json
 import os
 import asyncio
-from typing import Optional, Dict, Literal, Iterable, Any, AsyncGenerator, Coroutine
+from typing import Optional, Dict, Literal, Iterable, Any, AsyncGenerator
 from typing_extensions import override
 from openai import AsyncOpenAI
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
@@ -161,8 +161,10 @@ class OpenAICompatible(LLM_Interface):
         try:
             all_providers_info = json.loads(json_str)
         except json.JSONDecodeError as e:
-            push_critical(f"解析 JSON 字符串失败：{e}", location=get_location())
-            raise ValueError(f"解析 JSON 字符串失败：{e}")
+            push_critical(
+                f"Failed to parse JSON string: {e}", location=get_location()
+            )
+            raise ValueError(f"Failed to parse JSON string: {e}")
         # 检查JSON格式
 
         try:
@@ -170,17 +172,17 @@ class OpenAICompatible(LLM_Interface):
             for provider_id, models in all_providers_info.items():
                 all_providers_dict[provider_id] = {}
                 app_log(
-                    f"正在为提供商加载 OpenAICompatible 实例：{provider_id}",
+                    f"Loading OpenAICompatible instances for provider: {provider_id}",
                     location=get_location(),
                 )
 
                 if not isinstance(models, list):
                     push_critical(
-                        f"提供商 {provider_id} 下的模型格式无效。应为列表。",
+                        f"Invalid model format under provider {provider_id}. Expected a list.",
                         location=get_location(),
                     )
                     raise TypeError(
-                        f"提供商 {provider_id} 下的模型格式无效。应为列表。"
+                        f"Invalid model format under provider {provider_id}. Expected a list."
                     )
 
                 for model_info in models:
@@ -196,6 +198,7 @@ class OpenAICompatible(LLM_Interface):
                     rate_limit_refill_rate = model_info.get(
                         "rate_limit_refill_rate", 1.0
                     )
+                    api_params = model_info.get("api_params", None)
 
                     # 创建APIKeyPool实例
                     key_pool = APIKeyPool(api_keys, f"{provider_id}-{model_name}")
@@ -210,31 +213,35 @@ class OpenAICompatible(LLM_Interface):
                         retry_delay=retry_delay,
                         rate_limit_capacity=rate_limit_capacity,
                         rate_limit_refill_rate=rate_limit_refill_rate,
+                        api_params=api_params,
                     )
 
                     all_providers_dict[provider_id][model_name] = instance
 
                     app_log(
-                        f"已为提供商 {provider_id} 加载模型 {model_name} 的 OpenAICompatible 实例",
+                        f"Loaded OpenAICompatible instance for provider {provider_id} model {model_name}",
                         location=get_location(),
                     )
         except ValueError as e:
             push_critical(
-                f"加载 OpenAICompatible 实例时出错：{e}", location=get_location()
-            )
-            raise ValueError(f"加载 OpenAICompatible 实例时出错：{e}")
-        except TypeError as e:
-            push_critical(f"JSON 中的类型无效：{e}", location=get_location())
-            raise ValueError(f"JSON 中的类型无效：{e}")
-        except KeyError as e:
-            push_critical(f"JSON 中缺少必需的密钥：{e}", location=get_location())
-            raise ValueError(f"JSON 中缺少必需的密钥：{e}")
-        except Exception as e:
-            push_critical(
-                f"加载 OpenAICompatible 实例时发生未知错误：{e}",
+                f"Error while loading OpenAICompatible instances: {e}",
                 location=get_location(),
             )
-            raise ValueError(f"加载 OpenAICompatible 实例时发生未知错误：{e}")
+            raise ValueError(f"Error while loading OpenAICompatible instances: {e}")
+        except TypeError as e:
+            push_critical(f"Invalid type in JSON: {e}", location=get_location())
+            raise ValueError(f"Invalid type in JSON: {e}")
+        except KeyError as e:
+            push_critical(f"Missing required key in JSON: {e}", location=get_location())
+            raise ValueError(f"Missing required key in JSON: {e}")
+        except Exception as e:
+            push_critical(
+                f"Unknown error while loading OpenAICompatible instances: {e}",
+                location=get_location(),
+            )
+            raise ValueError(
+                f"Unknown error while loading OpenAICompatible instances: {e}"
+            )
 
         return all_providers_dict
 
@@ -266,6 +273,7 @@ class OpenAICompatible(LLM_Interface):
         rate_limit_capacity: int = 10,
         rate_limit_refill_rate: float = 1.0,
         context_window: Optional[int] = DEFAULT_CONTEXT_WINDOW,
+        api_params: Optional[Dict[str, Any]] = None,
     ):
         """初始化OpenAI兼容的LLM接口
 
@@ -278,6 +286,7 @@ class OpenAICompatible(LLM_Interface):
             rate_limit_capacity: 令牌桶容量（最大令牌数）
             rate_limit_refill_rate: 令牌补充速率（令牌数/秒）
             context_window: 模型上下文窗口大小；未指定时默认使用 200000 占位
+            api_params: 额外透传到 API 调用的参数，如 {"reasoning_effort": "high"}
         """
         super().__init__(
             api_key_pool,
@@ -298,6 +307,8 @@ class OpenAICompatible(LLM_Interface):
             capacity=rate_limit_capacity,
             refill_rate=rate_limit_refill_rate,
         )
+
+        self._api_params: Dict[str, Any] = dict(api_params) if api_params else {}
 
         self.client = AsyncOpenAI(
             api_key=api_key_pool.get_least_loaded_key(), base_url=self.base_url
@@ -377,10 +388,10 @@ class OpenAICompatible(LLM_Interface):
                 )
                 if not token_acquired:
                     push_warning(
-                        f"{self.model_name} 令牌桶获取令牌超时，跳过此次请求",
+                        f"{self.model_name} token bucket acquire timed out; skipping request",
                         location=get_location(),
                     )
-                    raise Exception("Rate limit: 令牌桶获取令牌超时")
+                    raise Exception("Rate limit: token bucket acquire timed out")
 
                 self.key_pool.increment_task_count(key)
                 data = json.dumps(messages, ensure_ascii=False, indent=4)
@@ -388,13 +399,16 @@ class OpenAICompatible(LLM_Interface):
                     f"OpenAICompatible::chat: {self.model_name} request with API key: {key}, and message: {data}",
                     location=get_location(),
                 )
+
+                # Merge instance-level api_params with call-level kwargs (call-level wins)
+                call_params = {**self._api_params, **kwargs}
                 response: ChatCompletion = await client.chat.completions.create(  # type: ignore
                     messages=messages,  # type: ignore
                     model=self.model_name,
                     stream=stream,
                     timeout=timeout,
                     *args,
-                    **kwargs,
+                    **call_params,
                 )
 
                 # 统计token
@@ -482,10 +496,10 @@ class OpenAICompatible(LLM_Interface):
                 )
                 if not token_acquired:
                     push_warning(
-                        f"{self.model_name} 流式请求令牌桶获取令牌超时，跳过此次请求",
+                        f"{self.model_name} stream token bucket acquire timed out; skipping request",
                         location=get_location(),
                     )
-                    raise Exception("Rate limit: 令牌桶获取令牌超时")
+                    raise Exception("Rate limit: token bucket acquire timed out")
 
                 self.key_pool.increment_task_count(key)
                 data = json.dumps(messages, ensure_ascii=False, indent=4)
@@ -494,7 +508,8 @@ class OpenAICompatible(LLM_Interface):
                     location=get_location(),
                 )
 
-                request_kwargs = dict(kwargs)
+                # Merge instance-level api_params with call-level kwargs (call-level wins)
+                request_kwargs = {**self._api_params, **kwargs}
                 auto_stream_options_added = False
                 if "stream_options" not in request_kwargs:
                     request_kwargs["stream_options"] = {"include_usage": True}

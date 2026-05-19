@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from SimpleLLMFunc.type.message import NormalizedMessageParam
+
 
 def build_assistant_tool_message(
     tool_calls: List[Dict[str, Any]],
+    content: Optional[str] = None,
     reasoning_details: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
+) -> NormalizedMessageParam:
     """Construct the assistant message containing tool call descriptors.
 
     Args:
@@ -23,13 +26,13 @@ def build_assistant_tool_message(
     if tool_calls:
         return {
             "role": "assistant",
-            "content": None,
+            "content": content,
             "tool_calls": tool_calls,
         }
     return {}
 
 
-def build_assistant_response_message(content: str) -> Dict[str, Any]:
+def build_assistant_response_message(content: str) -> NormalizedMessageParam:
     """Construct a plain assistant response message."""
 
     return {

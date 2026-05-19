@@ -162,7 +162,6 @@ async def get_exchange_rate(from_currency: str, to_currency: str) -> Dict[str, A
     llm_interface=llm_interface,
     toolkit=[get_weather, get_stock_price, search_product, get_exchange_rate],
     stream=False,
-    return_mode="raw",
 )
 async def parallel_info_query(
     history: Optional[List[Dict[str, Any]]] = None,
@@ -187,7 +186,6 @@ async def parallel_info_query(
     llm_interface=llm_interface,
     toolkit=[get_weather, get_stock_price, search_product],
     stream=True,
-    return_mode="raw",
 )
 async def streaming_parallel_query(
     history: Optional[List[Dict[str, Any]]] = None,

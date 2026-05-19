@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, Optional, Union
+from typing import Optional, Union
 
 from openai.types.chat.chat_completion import ChatCompletion
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
@@ -45,4 +45,3 @@ def extract_usage_from_response(
     except (AttributeError, TypeError):
         pass
     return None
-

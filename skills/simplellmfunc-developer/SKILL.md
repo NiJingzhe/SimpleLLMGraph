@@ -5,7 +5,7 @@ license: MIT
 compatibility: "Python 3.12+ repo with pytest, Poetry, Mintlify docs, and SimpleLLMFunc source tree available."
 metadata:
   project: SimpleLLMFunc
-  version: "0.7.8"
+  version: "0.8.0"
 ---
 
 # SimpleLLMFunc Framework Development
@@ -15,7 +15,9 @@ metadata:
 - Typical triggers: editing `SimpleLLMFunc/`, `tests/`, `docs/`, `spec/`, built-in tools, runtime primitives, decorator semantics, event-stream behavior, provider adapters, TUI utilities, or contributor docs.
 
 ## Core development philosophy
-- Preserve the framework's function-first design: `LLM as Function`, `Prompt as Code`, `Code as Doc`.
+- **LLM is Function**: preserve the framework's function-first design — LLM calls are indistinguishable from Python function calls.
+- **Prompt as Code**: docstrings are system prompts. Code and prompts are never separated.
+- **Context-Centric**: each provider request is compiled from invocation configuration, a base transcript/history, and runtime transcript patches. `ContextMutation` is an internal typed patch protocol, not the whole context source of truth. No component may directly modify the live ReAct transcript.
 - Keep public behavior explicit and typed.
 - Favor small, composable modules over hidden orchestration.
 - Prefer explicit boundaries between pure transforms, state mutation, and orchestration side effects. Recent selfref/ReAct work depends on keeping those lines sharp.
@@ -24,7 +26,7 @@ metadata:
 
 ## Default implementation workflow
 1. Read the relevant docs, tests, and source before changing behavior.
-2. Map the affected layer: decorator, base engine, runtime, tooling, interface, hooks, or docs/spec.
+2. Map the affected layer: decorator, compile boundary, ReAct runtime, tool system, runtime primitives, interface, hooks, or docs/spec.
 3. Write or update tests first for the behavior you are changing.
 4. Make the smallest coherent implementation change.
 5. Run targeted tests, then broader tests if the change touches shared behavior.
@@ -38,17 +40,81 @@ metadata:
 - If behavior changes affect docs or spec, update them in the same change.
 
 ## Project map
-- `SimpleLLMFunc/llm_decorator/`: public decorator entrypoints and stepwise orchestration.
-- `SimpleLLMFunc/base/`: ReAct loop, message handling, structured parsing, tool-call execution.
-- `SimpleLLMFunc/runtime/`: primitive registry, backend lifecycle, runtime call context, and selfref state/context transforms.
-- `SimpleLLMFunc/builtin/`: user-facing builtins such as `PyRepl`, `FileToolset`, and `SelfReference`.
-- `SimpleLLMFunc/hooks/`: events, event bus, stream wrappers, abort support.
-- `SimpleLLMFunc/interface/`: model interface abstractions and provider adapters such as `OpenAICompatible` and `OpenAIResponsesCompatible`.
-- `SimpleLLMFunc/logger/` and `SimpleLLMFunc/observability/`: logs, trace context, Langfuse.
-- `SimpleLLMFunc/utils/`: TUI and stdio helpers.
-- `tests/`: mirror of behavior and architecture; often the fastest place to infer conventions.
-- `mintlify_docs/`: Mintlify documentation source, including locale pages such as `en/...`.
-- `spec/`: higher-level project map and repo conventions.
+
+### L1. Decorator Layer (`llm_decorator/`)
+Public entry points and invocation contract building.
+- `llm_function_decorator.py`: `@llm_function` — returns an `LLMFunction` callable instance; `await instance(...)` gives typed result, `instance.stream(...)` yields `ReactOutput`
+- `llm_chat_decorator.py`: `@llm_chat` — returns an `LLMChat` callable instance; calling it yields a `ReactOutput` async stream and provides a stable SelfRef agent identity
+- `invocation_spec.py`: `InvocationSpec`, `PromptContract`, `TranscriptSeed`
+- `invocation_builder.py`: `build_function_invocation_spec()`, `build_chat_invocation_spec()`
+- `prompt_contract.py`: prompt templates, XML Schema generation, type descriptions
+- `signature.py`: `parse_function_signature()`, trace_id, log context
+- `utils/tools.py`: `process_tools()`, `collect_tool_prompt_specs()`
+- `selfref_sync.py`: legacy compatibility shim around `SelfRefSession`; active `llm_chat` binding/session orchestration lives in `LLMChat` plus `runtime/selfref/session.py`
+
+### L2+L3. Compile Boundary + ReAct Runtime (`base/`)
+Mutation-driven context evolution and event-only ReAct loop.
+
+Core loop modules:
+- `react_loop.py`: `run_react_loop()` — main async generator, event-only
+- `llm_call.py`: `execute_single_llm_phase()` — single LLM call, streaming/non-streaming
+- `tool_scheduler.py`: `schedule_tool_batch()` — concurrent asyncio.Task execution
+- `react_hooks.py`: `ReActHookExecutionContext`, hook lifecycle execution
+
+Compile pipeline:
+- `compile_pipeline.py`: **single compile entry** — `compile_invocation_turn()`, `reduce_turn_context()`, `convert_to_llm_request()`
+- `context_compile.py`: `apply_mutations()`, `compile_context()` — mutation apply engine
+- `llm_input_render.py`: `render_llm_input_messages()` — ephemeral system prompt rendering
+
+Type contracts (`base/types/`):
+- `source.py`: `CompileSource`, `DataFromAgentConfig`, `DataFromSelfRef`
+- `context.py`: `ContextState`, `CompiledContext`
+- `compile.py`: `ReducedTurnContext`, `CompiledTurnContext`
+- `mutation.py`: `ContextMutation` union type (10 variants)
+- `react.py`: `ReactLoopState`
+- `llm.py`: `SingleLLMCallResult`
+- `scheduler.py`: `ToolSchedulerResult`
+
+Message and tool sub-modules:
+- `messages/`: assistant message building, usage extraction, multimodal content, validation
+- `tool_call/`: extraction, execution, streaming state, validation
+- `type_resolve/`: type description, XML round-trip, multimodal detection
+- `post_process.py`: response → typed result (XML → Pydantic)
+
+### Runtime Primitive System (`runtime/`)
+- `primitives.py`: `PrimitiveRegistry`, `PrimitivePack`, `PrimitiveCallContext`, `@primitive()`
+- `worker_proxy.py`: `WorkerRuntimeProxy`, `WorkerRuntimeNamespace`, `PrimitiveTransport`
+- `selfref/state.py`: `SelfReference` — durable backend (history store, context editing, fork)
+- `selfref/session.py`: `SelfRefSession` — invocation-scoped plugin implementing ReAct hooks
+- `selfref/context_ops.py`: `parse_context_messages()`, `build_context_messages_from_state_data()`, `canonicalize_context_messages()`
+- `selfref/primitives.py`: 8 selfref primitives (guide, context.inspect/remember/forget/compact, fork.is_bound/spawn/gather_all)
+
+### Built-in Tools (`builtin/`)
+- `pyrepl.py`: `PyRepl` — persistent IPython REPL with primitive pack support
+- `self_reference.py`: `SelfReference` memory/fork backend
+- `file_tools.py`: `FileToolset` — workspace-scoped file tools with stale-write protection
+
+### Event Stream (`hooks/`)
+- `events.py`: 14 `ReActEvent` subtypes
+- `stream.py`: `ReactOutput`, `ResponseYield`, `EventYield`, type guards
+- `event_bus.py`: `EventBus` — event ingress with origin metadata
+- `event_emitter.py`: `ToolEventEmitter`, `NoOpEventEmitter`
+
+### Interface Layer (`interface/`)
+- `llm_interface.py`: `LLM_Interface` abstract base class
+- `openai_compatible.py`: `OpenAICompatible` adapter
+- `openai_responses_compatible.py`: `OpenAIResponsesCompatible` adapter
+- `key_pool.py`: `APIKeyPool` — multi-key rotation
+- `token_bucket.py`: token-bucket rate limiting
+
+### Infrastructure
+- `logger/`: structured logging, trace_id, async context manager
+- `observability/`: Langfuse trace/span integration
+- `type/`: multimodal types (`Text`, `ImgUrl`, `ImgPath`)
+- `utils/tui/`: Textual TUI integration
+
+### Tests (`tests/`)
+Mirror of behavior and architecture; often the fastest place to infer conventions.
 
 ## Naming and style rules
 - File names: `snake_case`.
@@ -60,17 +126,51 @@ metadata:
 - Follow the repo's existing formatting and PEP 8 style.
 
 ## Framework-specific development rules
+
+### Core rule: runtime transcript patch boundary
+LLM-visible messages are compiled from invocation config, a base transcript/history, and runtime patches:
+1. Producers (LLM call, tool exec, selfref hooks) emit `ContextMutation` objects for runtime transcript edits.
+2. `react_loop` collects mutations before each compile boundary.
+3. `compile_context()` applies mutations in order via `apply_mutations()`.
+4. The compile pipeline combines that patched transcript with invocation config and SelfRef source data before rendering provider messages.
+
+Do not introduce code that directly mutates `ContextState.messages` outside of `apply_mutations()`. Do not let tools or primitives write directly to the live transcript. Also do not describe mutations as the source of all context: docstrings, template params, tool schemas, and initial history are separate compile inputs.
+
+### SelfRef rules
+- `SelfReference` (`runtime/selfref/state.py`) is the durable backend — it stores history, experiences, summaries, and manages fork state.
+- `SelfRefSession` (`runtime/selfref/session.py`) is the invocation-scoped plugin that implements ReAct hooks (`collect_context_mutations`, `finalize`, etc.).
+- Keep pure context parsing/rendering in `runtime/selfref/context_ops.py`.
+- Keep stateful storage and mutation in `runtime/selfref/state.py`.
+- `LLMChat` is the stable callable agent instance bound into `SelfReference`; keep per-call mutable state inside invocation locals / `SelfRefSession`, not on shared instance fields.
+- `llm_decorator/selfref_sync.py` is a legacy compatibility shim; do not move new lifecycle logic there unless intentionally reviving that layer.
+- SelfRef can only affect the system through: source snapshot, pending intents → mutations, finalize side effects.
+- `runtime.selfref.fork.spawn(...)` children inherit the pre-fork context snapshot. Do not reintroduce the parent's pending assistant tool-call message into child-visible history.
+
+### ReAct runtime rules
+- The core is event-only: `run_react_loop()` always yields `ReactOutput`.
+- There is no `enable_event` parameter; event mode is the only mode at the core level.
+- New terminal behavior should flow through the shared finalize path so `before_finalize` stays consistent across event, abort, and max-tool-cap exits.
+- Abort is mutation-producing behavior: `AssistantTruncatedMutation` for LLM abort, `ToolCancelledMutation` for tool abort.
+- Do not add dual-mode (event/non-event) logic inside `react_loop.py`, `llm_call.py`, or `tool_scheduler.py`.
+
+### Decorator rules
+- `@llm_function` returns `LLMFunction`; `@llm_chat` returns `LLMChat`. Preserve function-like metadata (`__wrapped__`, `__name__`, `__doc__`, `__annotations__`, `__signature__`) when changing them.
+- Do not reintroduce closure-only wrapper implementations for SelfRef binding; SelfRef should bind the stable `LLMChat` instance.
+- There is no `enable_event` or `return_mode` decorator parameter; `llm_chat` always yields `ReactOutput`, and `llm_function.stream(...)` yields `ReactOutput`.
 - Prefer `async def` for decorated public patterns and tool implementations.
 - Keep docstring-parsed contracts in sync with behavior. This matters for `@tool` and runtime primitives.
 - Runtime primitive docstrings must include `Best Practices`; registration fails without them.
 - Preserve history semantics in `llm_chat`: `history` and `chat_history` are special names.
 - Preserve structured output parsing behavior unless the task explicitly changes it.
-- For selfref work, keep pure context parsing/rendering in `runtime/selfref/context_ops.py`, stateful storage and mutation in `runtime/selfref/state.py`, and `llm_chat` lifecycle bridging in `llm_decorator/selfref_sync.py`.
-- For provider work, keep wire-format differences in the adapter layer under `SimpleLLMFunc/interface/`; do not leak Responses-specific request/stream contracts into `ReAct` or decorator code unless the public framework contract is intentionally changing.
+
+### Provider adapter rules
+- Keep wire-format differences in the adapter layer under `SimpleLLMFunc/interface/`.
+- Do not leak Responses-specific request/stream contracts into `ReAct` or decorator code unless the public framework contract is intentionally changing.
 - `OpenAIResponsesCompatible` should remain a first-class adapter, not a special case hidden inside `ReAct`. System prompts map to Responses `instructions`, and Responses-specific reasoning/tool-stream handling belongs in the adapter.
-- For ReAct work, treat `base/ReAct.py` as phase-based orchestration. New terminal behavior should flow through the shared finalize path so `before_finalize` stays consistent across event, non-event, abort, and max-tool-cap exits.
-- For selfref fork work, child context should be built from the pre-fork snapshot. Do not reintroduce the parent's pending assistant tool-call message into child-visible history.
+
+### Test rules
 - Treat tests as executable API documentation for subtle cases like self-reference, event mode, and provider compatibility.
+- Add architecture tests (invocation isolation, compile single-entry, history authority) when changing the invocation/compile/finalize pipeline.
 
 ## Documentation and spec rules
 - Update `mintlify_docs/` when user-facing behavior changes.

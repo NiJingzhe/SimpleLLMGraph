@@ -1,0 +1,116 @@
+---
+title: TUI
+description: 使用 @tui 装饰器构建终端聊天界面
+---
+
+# TUI
+
+`@tui` 装饰器将一个 `@llm_chat` Agent 包装为完整的 Textual 终端 UI，支持流式输出、工具可视化以及输入处理。
+
+## 基本用法
+
+```python
+from SimpleLLMFunc import llm_chat, OpenAICompatible
+from SimpleLLMFunc.utils.tui import tui
+
+models = OpenAICompatible.load_from_json_file("provider.json")
+llm = models["openrouter"]["openai/gpt-4o"]
+
+
+@tui
+@llm_chat(llm_interface=llm, toolkit=[...], stream=True)
+async def agent(message: str, history: list | None = None, _abort_signal=None):
+    """A helpful assistant."""
+    pass
+
+
+if __name__ == "__main__":
+    agent()
+```
+
+运行后即可在终端中获得一个完整的聊天界面。
+
+## 功能特性
+
+- **流式显示** — 模型响应逐字符呈现
+- **工具调用卡片** — 每个工具调用都会显示一张可视化卡片，展示名称、参数和结果
+- **专用卡片** — `execute_code`、`read_file`、`grep`、`sed`、`echo_into` 拥有自定义渲染
+- **中止** — `Ctrl+C` 取消当前响应
+- **复制** — `Ctrl+Y` 将完整对话记录复制到剪贴板
+- **多列分叉** — 使用 SelfRef 分叉时，子 Agent 会获得各自独立的列
+
+## 斜杠命令
+
+| 命令 | 操作 |
+|---------|--------|
+| `/exit`、`/quit`、`/q` | 退出 TUI |
+| `/copy`、`/copyall` | 将对话记录复制到剪贴板 |
+| `/chat <msg>` | 发送消息（绕过工具输入模式） |
+
+## 自定义事件钩子
+
+使用钩子处理自定义事件（例如 PyRepl 流式输出）：
+
+```python
+from SimpleLLMFunc.hooks.events import CustomEvent
+from SimpleLLMFunc.utils.tui import ToolRenderSnapshot
+
+
+def my_event_hook(event: CustomEvent, snapshot: ToolRenderSnapshot):
+    """Process custom events for display."""
+    if event.event_name == "kernel_stdout":
+        # 处理 PyRepl stdout 流式输出
+        pass
+    return None
+
+
+@tui(custom_event_hook=[my_event_hook])
+@llm_chat(llm_interface=llm, toolkit=repl.toolset, stream=True)
+async def agent(message: str, history: list | None = None, _abort_signal=None):
+    """My agent."""
+    pass
+```
+
+## 装饰器参数
+
+| 参数 | 类型 | 说明 |
+|-----------|------|-------------|
+| `custom_event_hook` | `List[Callable]` | 自定义事件处理函数 |
+| `title` | `str` | 窗口标题 |
+
+## ToolRenderSnapshot
+
+传递给事件钩子，包含当前工具卡片的上下文信息：
+
+```python
+@dataclass
+class ToolRenderSnapshot:
+    tool_name: str
+    tool_call_id: str
+    status: str          # "running", "completed", "error"
+    arguments: dict
+```
+
+## 键盘快捷键
+
+| 按键 | 操作 |
+|-----|--------|
+| `Ctrl+C` | 中止当前响应 |
+| `Ctrl+Q` | 退出 |
+| `Ctrl+Y` | 复制对话记录 |
+| `Enter` | 发送消息 |
+
+## 何时使用 @tui vs 自定义 UI
+
+在以下情况下使用 `@tui`：
+- 你希望快速获得一个可用的聊天界面
+- 内置工具卡片已满足需求
+- 你不需要自定义组件或布局
+
+在以下情况下构建自定义 UI：
+- 你需要对危险操作添加确认弹窗
+- 你想要带有自定义指标的状态栏
+- 你需要非聊天类 UI 元素（文件树、进度条等）
+- 你在构建一个产品，而不仅仅是一个工具
+
+对于自定义 UI，直接消费 `ReactOutput` 流，并使用 Textual 或其他任意框架进行渲染。

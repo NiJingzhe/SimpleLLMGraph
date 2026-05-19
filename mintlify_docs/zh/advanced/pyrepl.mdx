@@ -1,0 +1,174 @@
+---
+title: PyRepl
+description: 支持运行时原语和流式输出的持久化 Python REPL
+---
+
+# PyRepl
+
+PyRepl 是一个运行在子进程中的持久化 IPython REPL。它为模型提供了一个连续的执行环境，变量在多次调用间保持不变，且运行时原语无需导入即可访问。
+
+## 核心特性
+
+- **持久化状态** —— 在一次 `execute_code` 调用中定义的变量可在下次调用中继续使用
+- **进程隔离** —— 运行在独立子进程中（multiprocessing spawn）。崩溃不会影响主进程
+- **运行时注入** —— `runtime` 对象全局可用，无需导入
+- **流式输出** —— stdout/stderr 通过自定义事件实时流式传输
+- **超时保护** —— 每次执行默认 600 秒超时，可配置
+
+## 设置
+
+```python
+from SimpleLLMFunc.builtin import PyRepl
+
+repl = PyRepl(working_directory="/path/to/workspace")
+
+# 在 Agent 中作为工具集使用
+@llm_chat(llm_interface=llm, toolkit=repl.toolset, stream=True)
+async def agent(message: str, history: list | None = None):
+    """A code-executing agent."""
+    pass
+```
+
+## 提供的工具
+
+### execute_code
+
+在持久化 REPL 中运行任意 Python 代码：
+
+```python
+result = await execute_code(code="""
+import math
+x = math.sqrt(144)
+print(f"Result: {x}")
+x
+""")
+# Returns: {"stdout": "Result: 12.0\n", "return_value": "12.0", "execution_time_ms": ...}
+```
+
+返回值是最后一个表达式的 repr（与 IPython 行为一致）。
+
+### reset_repl
+
+清除所有用户变量，但保留运行时 backend：
+
+```python
+await reset_repl()
+# 执行后：`x` 已被清除，但 `runtime.selfref.context.inspect()` 仍可使用
+```
+
+## Runtime 命名空间
+
+在 `execute_code` 内部，`runtime` 对象提供以下能力：
+
+```python
+# 元原语（始终可用）
+runtime.list_primitives()
+runtime.list_primitive_specs()
+runtime.get_primitive_spec("selfref.context.compact")
+runtime.list_backends()
+
+# SelfRef 原语（当 selfref 处于激活状态时）
+runtime.selfref.context.inspect()
+runtime.selfref.context.remember("important fact")
+runtime.selfref.context.forget("exp_001")
+runtime.selfref.context.compact(goal=..., instruction=..., ...)
+runtime.selfref.fork.spawn(task=..., instruction=...)
+runtime.selfref.fork.gather_all()
+
+# 自定义 Pack 原语（如已安装）
+runtime.metrics.increment_counter("files_read")
+```
+
+## 流式输出
+
+PyRepl 通过自定义事件发送实时输出：
+
+| 事件名称 | 数据 | 触发时机 |
+|-----------|------|------|
+| `kernel_stdout` | `{"text": "..."}` | 每次 stdout 刷新时 |
+| `kernel_stderr` | `{"text": "..."}` | 每次 stderr 刷新时 |
+
+在事件处理器中消费：
+
+```python
+from SimpleLLMFunc.hooks import is_event_yield, CustomEvent
+
+async for output in agent("run some code", history):
+    if is_event_yield(output):
+        if isinstance(output.event, CustomEvent):
+            if output.event.event_name == "kernel_stdout":
+                print(output.event.data["text"], end="")
+```
+
+## 输出截断
+
+当工具结果超过约 20,000 个 token 时：
+1. 完整输出会写入临时文件
+2. 截断版本（前约 4,096 个 token）+ 文件路径返回给模型
+3. 模型可以使用 `read_file` 访问指定部分
+
+通过 `_too_long_to_file=True` 按 Agent 粒度启用。
+
+## 工作目录
+
+```python
+repl = PyRepl(working_directory="/path/to/project")
+```
+
+REPL 在该目录下启动。`execute_code` 内部的 `os.getcwd()` 会返回此路径。
+
+## 安装自定义 Primitive Pack
+
+```python
+from SimpleLLMFunc.runtime import PrimitivePack
+
+my_pack = PrimitivePack(namespace="mytools", backend=..., primitives=[...])
+repl.install_primitive_pack(my_pack)
+```
+
+安装后，`runtime.mytools.*` 即可在 `execute_code` 中使用。
+
+## SelfRef 集成
+
+在 Agent 上使用 `self_reference_key` 时，框架会自动：
+1. 创建 SelfReference backend
+2. 构建 selfref primitive pack
+3. 将其安装到 PyRepl 实例中
+4. 使 `runtime.selfref.*` 可用
+
+```python
+@llm_chat(
+    llm_interface=llm,
+    toolkit=repl.toolset,
+    self_reference_key="agent_main",
+)
+async def agent(message: str, history: list | None = None):
+    """Agent with code execution + self-reference."""
+    pass
+```
+
+## 实用模式：CodeAct Agent
+
+"CodeAct"模式将 PyRepl 作为主要行动面——模型通过编写 Python 代码来完成任务，而不是为每个操作使用单独的工具：
+
+```python
+repl = PyRepl(working_directory=workspace)
+file_tools = FileToolset(workspace).toolset
+
+@llm_chat(
+    llm_interface=llm,
+    toolkit=[*repl.toolset, *file_tools],
+    self_reference_key="agent_main",
+    stream=True,
+)
+async def coding_agent(message: str, history: list | None = None):
+    """
+    Solve coding tasks by writing and executing Python.
+    Use execute_code for inspection, computation, and verification.
+    Use file tools for reading and editing project files.
+    Use runtime.selfref.context.compact(...) when context grows large.
+    """
+    pass
+```
+
+→ [API 参考：内置组件](/zh/api/builtins)

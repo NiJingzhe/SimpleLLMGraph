@@ -34,7 +34,6 @@ tools = repl.toolset
 @llm_chat(
     llm_interface=llm,
     toolkit=tools,
-    enable_event=True,
 )
 async def python_assistant(message: str, history=None):
     """
@@ -142,7 +141,7 @@ result = await repl.reset()
 
 ## Streaming 事件
 
-当 `enable_event=True` 时，`execute_code` 会实时发射以下事件：
+当消费 `ReactOutput` 事件流时，`execute_code` 会实时发射以下事件：
 
 | 事件名 | data 字段 | 描述 |
 |--------|-----------|------|
@@ -168,7 +167,7 @@ async for output in llm_chat_function(message):
 # 你可以把用户输入通过 PyRepl.submit_input(request_id, value) 回填。
 ```
 
-当你通过 `@llm_chat(enable_event=True)` 消费事件流时，可直接使用 `output.origin` 区分主链路和 fork 链路：
+当你消费 `@llm_chat` 的 `ReactOutput` 事件流时，可直接使用 `output.origin` 区分主链路和 fork 链路：
 
 ```python
 from SimpleLLMFunc.hooks import is_event_yield
@@ -195,7 +194,6 @@ repl = PyRepl()
 @llm_chat(
     llm_interface=llm,
     toolkit=repl.toolset,
-    enable_event=True,
 )
 async def data_helper(message: str, history=None):
     """
@@ -457,7 +455,7 @@ Fork 规划清单（`runtime.selfref.guide()` 会返回同样的 guidance）：
 - 需要删除错误经验时，使用 `runtime.selfref.context.forget(...)`。
 - 需要在 milestone 结束后清空 stale transcript 时，使用 `runtime.selfref.context.compact(...)`。
 
-所有操作都会写入 `SelfReference` 的内部存储，而不是直接暴露原始列表。单次对话中的记忆变更会在工具批次后尽早合并到同 turn 的后续上下文里，并且最迟会在回合结束时合并进返回的 `updated_history`（事件模式下为 `ReactEndEvent.final_messages`）。
+所有操作都会写入 `SelfReference` 的内部存储，而不是直接暴露原始列表。单次对话中的记忆变更会在工具批次后尽早合并到同 turn 的后续上下文里，并且最迟会在回合结束时合并进返回的 `ReactEndEvent.final_messages`。
 
 ### 单个 REPL 中多 agent 共享
 

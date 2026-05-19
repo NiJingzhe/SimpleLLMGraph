@@ -1,0 +1,93 @@
+---
+title: 可观测性
+description: 通过 Langfuse 集成实现 LLM 调用和工具执行的链路追踪
+---
+
+# 可观测性
+
+SimpleLLMFunc 集成了 [Langfuse](https://langfuse.com)，用于追踪 LLM 生成、工具调用和 Agent 会话。
+
+## 设置
+
+### 1. 安装（已包含在 SimpleLLMFunc 中）
+
+Langfuse 客户端已内置，无需额外安装。
+
+### 2. 配置环境变量
+
+```bash
+# .env
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
+LANGFUSE_ENABLED=true
+LANGFUSE_EXPORT_ALL_SPANS=true
+```
+
+### 3. 正常使用即可
+
+配置完成后，追踪是自动进行的。每次被 `@llm_function` 和 `@llm_chat` 装饰的调用都会创建：
+- 一个 **Trace**，对应完整的调用生命周期
+- **Generation** 记录，对应每次 LLM 调用
+- **Span** 记录，对应每次工具执行
+
+## 追踪内容
+
+| 组件 | Langfuse 实体 | 包含内容 |
+|-----------|----------------|----------|
+| `@llm_function` 调用 | Trace | 完整的调用生命周期 |
+| `@llm_chat` 调用 | Trace | 完整的 ReAct 循环 |
+| 每次 LLM API 调用 | Generation | 输入/输出消息、token 数、延迟 |
+| 每次工具执行 | Span | 工具名称、参数、结果、耗时 |
+| ReAct 迭代 | Span | 迭代边界 |
+
+## Trace ID
+
+每次调用都会获得一个唯一的 `trace_id`，贯穿所有嵌套操作：
+
+```python
+from SimpleLLMFunc.logger import get_current_trace_id
+
+# 在工具或自定义代码内部
+trace_id = get_current_trace_id()
+```
+
+## 自定义 Trace 名称
+
+Trace 名称默认为被装饰函数的函数名。可通过以下方式覆盖：
+
+```python
+@llm_function(llm_interface=llm)
+async def my_func(text: str) -> str:
+    """Process text."""
+    pass
+
+# 该 trace 在 Langfuse 中将命名为 "my_func"
+```
+
+## 刷新
+
+观测数据会被批量异步发送。在关闭时可强制刷新：
+
+```python
+from SimpleLLMFunc.observability import flush_all_observations
+
+await flush_all_observations()
+```
+
+## 禁用
+
+设置 `LANGFUSE_ENABLED=false` 或不配置密钥即可。框架会优雅降级——不会报错，只是不产生 trace。
+
+## 日志级别
+
+独立控制框架日志：
+
+```bash
+LOG_LEVEL=WARNING   # 推荐：抑制内部的冗余日志
+LOG_DIR=logs        # 文件输出位置
+```
+
+可用级别：`DEBUG`、`INFO`、`WARNING`、`ERROR`、`CRITICAL`。
+
+仅在排查框架行为时使用 `DEBUG`。生产环境推荐使用 `WARNING` 作为默认级别。

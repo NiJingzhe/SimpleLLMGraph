@@ -19,6 +19,7 @@ from SimpleLLMFunc.utils.tui.tool_cards.default import DefaultToolCallCard
 from SimpleLLMFunc.utils.tui.tool_cards.execute_code import ExecuteCodeToolCallCard
 from SimpleLLMFunc.utils.tui.tool_cards.file_tools import (
     ReadFileToolCallCard,
+    ReadImageToolCallCard,
     SedToolCallCard,
 )
 
@@ -242,6 +243,27 @@ async def test_read_file_uses_specialized_file_tool_card() -> None:
         assert "`src/app.py`" in tool.arguments_markdown
         assert "## Line Range" in tool.arguments_markdown
         assert "10-25" in tool.arguments_markdown
+
+
+@pytest.mark.asyncio
+async def test_read_image_uses_specialized_file_tool_card() -> None:
+    """read_image should render path with the file-focused layout."""
+    app = _make_app()
+
+    async with app.run_test():
+        await app.start_model_response("llm_call_1")
+        await app.start_tool_call(
+            model_call_id="llm_call_1",
+            tool_call_id="call-read-image",
+            tool_name="read_image",
+            arguments={"path": "img/chart.png"},
+        )
+
+        tool = app._tools["call-read-image"]
+        assert isinstance(tool, ReadImageToolCallCard)
+        assert "## File" in tool.arguments_markdown
+        assert "`img/chart.png`" in tool.arguments_markdown
+        assert "## Line Range" not in tool.arguments_markdown
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,140 @@
+---
+title: LLM 接口
+description: "OpenAICompatible、OpenAIResponsesCompatible、密钥池和速率限制"
+---
+
+# LLM 接口
+
+接口层负责处理模型通信、密钥轮换和速率限制。
+
+## OpenAICompatible
+
+适用于任何实现了 OpenAI Chat Completions API 的提供商：
+
+```python
+from SimpleLLMFunc import OpenAICompatible
+
+# 从 provider.json 加载
+models = OpenAICompatible.load_from_json_file("provider.json")
+llm = models["openrouter"]["openai/gpt-4o"]
+
+# 直接构造
+from SimpleLLMFunc import APIKeyPool
+
+llm = OpenAICompatible(
+    api_key_pool=APIKeyPool(api_keys=["sk-key"], provider_id="openai"),
+    model_name="gpt-4o",
+    base_url="https://api.openai.com/v1",
+    max_retries=3,
+    retry_delay=1.0,
+    rate_limit_capacity=20,
+    rate_limit_refill_rate=3.0,
+    context_window=128_000,
+)
+```
+
+兼容：OpenAI、OpenRouter、Together、Groq、本地 vLLM、Ollama 等。
+
+## OpenAIResponsesCompatible
+
+适用于实现了 OpenAI Responses API 的提供商：
+
+```python
+from SimpleLLMFunc import OpenAIResponsesCompatible
+
+llm = OpenAIResponsesCompatible(
+    api_key_pool=APIKeyPool(api_keys=["sk-key"], provider_id="openai"),
+    model_name="gpt-4o",
+    base_url="https://api.openai.com/v1",
+)
+```
+
+与 OpenAICompatible 的区别：
+- 将系统提示词映射到 `instructions` 字段
+- 处理 Responses 特有的流式事件
+- 支持 `reasoning={...}` kwargs 来控制推理力度
+- 工具调用的协议格式不同
+
+从装饰器代码层面看，两种适配器的使用方式完全相同。协议格式差异在内部处理。
+
+## APIKeyPool
+
+通过轮询机制管理多个密钥：
+
+```python
+from SimpleLLMFunc import APIKeyPool
+
+pool = APIKeyPool(
+    api_keys=["sk-key-1", "sk-key-2", "sk-key-3"],
+    provider_id="openrouter-gpt4",
+)
+```
+
+当某个密钥触发速率限制时，密钥池会自动切换到下一个。将配额最高的密钥放在最前面。
+
+## 速率限制
+
+内置令牌桶速率限制器：
+
+```python
+# 通过构造函数配置
+llm = OpenAICompatible(
+    ...,
+    rate_limit_capacity=20,       # 桶中的最大并发"令牌"数
+    rate_limit_refill_rate=3.0,   # 每秒补充的令牌数
+)
+
+# 查看状态
+status = llm.get_rate_limit_status()
+# {"available": 15, "capacity": 20, "refill_rate": 3.0}
+
+# 在速率限制错误后重置
+llm.reset_rate_limit()
+```
+
+速率限制器是按实例生效的。针对同一模型的多个 `OpenAICompatible` 实例可以有不同的速率限制。
+
+## 传递 LLM kwargs
+
+额外参数会被转发给提供商：
+
+```python
+@llm_chat(
+    llm_interface=llm,
+    temperature=0.7,
+    max_tokens=4096,
+    top_p=0.9,
+)
+async def agent(message: str, history: list | None = None):
+    """My agent."""
+    pass
+```
+
+对于 OpenAIResponsesCompatible，可以传递推理力度参数：
+
+```python
+@llm_chat(
+    llm_interface=llm,
+    reasoning_effort="high",
+)
+async def reasoning_agent(message: str, history: list | None = None):
+    """An agent that reasons deeply."""
+    pass
+```
+
+## 上下文窗口
+
+设置 `context_window` 以启用依赖模型容量信息的框架功能：
+
+```python
+llm = OpenAICompatible(
+    ...,
+    context_window=128_000,  # GPT-4o 的上下文窗口
+)
+```
+
+用于：自动压缩阈值计算、token 使用量追踪。
+
+默认值：200,000 个 token。
+
+→ [API 参考：接口](/zh/api/interfaces)

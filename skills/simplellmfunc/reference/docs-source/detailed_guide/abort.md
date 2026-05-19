@@ -25,7 +25,7 @@ import asyncio
 from SimpleLLMFunc import llm_chat
 from SimpleLLMFunc.hooks import AbortSignal, ABORT_SIGNAL_PARAM
 
-@llm_chat(llm_interface=llm, stream=True, enable_event=True)
+@llm_chat(llm_interface=llm, stream=True)
 async def chat(message: str, history=None):
     """你的系统提示"""
     pass
@@ -57,7 +57,7 @@ import asyncio
 from SimpleLLMFunc import llm_function
 from SimpleLLMFunc.hooks import AbortSignal, ABORT_SIGNAL_PARAM
 
-@llm_function(llm_interface=llm, enable_event=True)
+@llm_function(llm_interface=llm)
 async def analyze(text: str) -> str:
     """分析文本"""
     pass
@@ -84,7 +84,7 @@ asyncio.run(run())
 
 - **流式输出**：中断后不再接收新的 chunk。
 - **工具调用**：正在执行的工具调用会被取消；在事件流中可能看到 `ToolCallErrorEvent`，其 `error_type` 为 `CancelledError`。
-- **事件流收尾**：当 `enable_event=True` 时，`ReactEndEvent.extra` 会包含：
+- **事件流收尾**：事件流收尾时，`ReactEndEvent.extra` 会包含：
   - `aborted: true`
   - `abort_reason: <reason>`（如果传入了 reason）
 - **非事件流模式**：生成器会提前结束，不会额外产出 `ReactEndEvent`。

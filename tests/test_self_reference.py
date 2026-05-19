@@ -9,6 +9,8 @@ from typing import Any
 
 import pytest
 
+from SimpleLLMFunc.base.react_hooks import ReActHookExecutionContext
+from SimpleLLMFunc.base.types import DataFromSelfRef
 from SimpleLLMFunc.hooks.events import CustomEvent, ReActEventType
 from SimpleLLMFunc.hooks.stream import EventOrigin, EventYield
 from SimpleLLMFunc.runtime.selfref import SelfReference
@@ -209,6 +211,99 @@ class TestSelfReferenceTurnMerge:
         assert (
             "reasoning_details" not in self_reference.snapshot_history("agent_main")[-1]
         )
+
+    def test_snapshot_history_reads_active_messages(self) -> None:
+        self_reference = SelfReference()
+        self_reference.bind_history("agent_main", [{"role": "user", "content": "seed"}])
+
+        state = ReActHookExecutionContext(
+            trace_id="trace-1",
+            func_name="agent",
+            user_task_prompt="hello",
+            messages=[
+                {"role": "user", "content": "seed"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "test_tool", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": '"ok"'},
+            ],
+            llm_kwargs={},
+            stream=False,
+        )
+
+        memory_token = self_reference._set_active_memory_key("agent_main")
+        state_token = self_reference._set_active_react_state(state)
+        try:
+            assert self_reference.snapshot_history("agent_main") == state.messages
+            assert self_reference.snapshot_context_messages("agent_main") == state.messages
+        finally:
+            self_reference._reset_active_react_state(state_token)
+            self_reference._reset_active_memory_key(memory_token)
+
+    def test_snapshot_selfref_source_returns_parsed_source_state(self) -> None:
+        self_reference = SelfReference()
+        self_reference.bind_history(
+            "agent_main",
+            [
+                {
+                    "role": "system",
+                    "content": "Base rules\n\n<experience>\n- [exp_1] Preference A\n</experience>",
+                },
+                {
+                    "role": "assistant",
+                    "content": (
+                        "<context_compaction_summary>\n"
+                        "## Goal\nGoal A\n\n"
+                        "## Instruction\nInstruction A\n\n"
+                        "## Discoveries\n- Discovery A\n\n"
+                        "## Completed\n- Completed A\n\n"
+                        "## Current Status\nStatus A\n\n"
+                        "## Likely next work\n- Next A\n\n"
+                        "## Relevant files/directories\n- src/a.py\n"
+                        "</context_compaction_summary>"
+                    ),
+                },
+                {"role": "user", "content": "follow-up"},
+            ],
+        )
+
+        source = self_reference.snapshot_selfref_source("agent_main")
+
+        assert isinstance(source, DataFromSelfRef)
+        assert source.base_system_prompt == "Base rules"
+        assert source.experiences == [{"id": "exp_1", "text": "Preference A"}]
+        assert source.summary is not None
+        assert source.summary["goal"] == "Goal A"
+        assert source.working_messages == [{"role": "user", "content": "follow-up"}]
+
+    def test_replace_history_updates_snapshot_selfref_source(self) -> None:
+        self_reference = SelfReference()
+        self_reference.bind_history("agent_main", [{"role": "user", "content": "seed"}])
+
+        self_reference.replace_history(
+            "agent_main",
+            [
+                {
+                    "role": "system",
+                    "content": "Base rules\n\n<experience>\n- [exp_1] Preference B\n</experience>",
+                },
+                {"role": "assistant", "content": "kept summary"},
+            ],
+        )
+
+        source = self_reference.snapshot_selfref_source("agent_main")
+
+        assert source.base_system_prompt == "Base rules"
+        assert source.experiences == [{"id": "exp_1", "text": "Preference B"}]
+        assert source.working_messages == [{"role": "assistant", "content": "kept summary"}]
 
 
 class TestSelfReferenceInstanceProxy:

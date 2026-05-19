@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+import re
+from typing import Any
 
 from SimpleLLMFunc.utils.tui.tool_cards.base import ToolCallCard
 
@@ -37,6 +38,42 @@ def _build_sed_diff_preview(pattern: str, replacement: str) -> str:
         f"+ {replacement}",
     ]
     return _render_fenced_block("\n".join(lines), "diff")
+
+
+_GREP_MATCH_LINE_RE = re.compile(r"^[^\n:]+:\d+\s+\|\s.*$", re.MULTILINE)
+
+
+def _looks_like_read_file_success(result_markdown: str) -> bool:
+    normalized = result_markdown.strip()
+    return (
+        normalized.startswith("This is file ")
+        or "we have shown the line number as `<lineno> |`" in normalized
+    )
+
+
+def _is_grep_validation_message(result_markdown: str) -> bool:
+    normalized = result_markdown.strip()
+    return normalized.startswith(
+        (
+            "pattern must ",
+            "path_pattern is required",
+            "invalid pattern regex:",
+            "invalid path_pattern regex:",
+            "pattern cannot be a full wildcard regex",
+            "path_pattern cannot be a full wildcard regex",
+        )
+    )
+
+
+def _count_grep_matches(result_markdown: str) -> int | None:
+    normalized = result_markdown.strip()
+    if normalized == "Nothing matched provided pattern.":
+        return 0
+
+    matches = _GREP_MATCH_LINE_RE.findall(normalized)
+    if matches:
+        return len(matches)
+    return None
 
 
 class FileToolCallCard(ToolCallCard):
@@ -90,6 +127,15 @@ class FileToolCallCard(ToolCallCard):
 class ReadFileToolCallCard(FileToolCallCard):
     """Card for read_file."""
 
+    def build_result_markdown(self) -> str:
+        if _looks_like_read_file_success(self.result_markdown):
+            return ""
+        return super().build_result_markdown()
+
+
+class ReadImageToolCallCard(FileToolCallCard):
+    """Card for read_image."""
+
 
 class GrepToolCallCard(FileToolCallCard):
     """Card for grep with explicit pattern/scope sections."""
@@ -121,6 +167,17 @@ class GrepToolCallCard(FileToolCallCard):
         if not self.arguments_markdown.strip():
             self.arguments_markdown = "_No arguments_"
         self.last_argument_changed = None
+
+    def build_result_markdown(self) -> str:
+        if _is_grep_validation_message(self.result_markdown):
+            return super().build_result_markdown()
+
+        match_count = _count_grep_matches(self.result_markdown)
+        if match_count is None:
+            return super().build_result_markdown()
+        if match_count == 1:
+            return "1 match"
+        return f"{match_count} matches"
 
 
 class SedToolCallCard(FileToolCallCard):
@@ -195,6 +252,7 @@ class EchoIntoToolCallCard(FileToolCallCard):
 __all__ = [
     "FileToolCallCard",
     "ReadFileToolCallCard",
+    "ReadImageToolCallCard",
     "GrepToolCallCard",
     "SedToolCallCard",
     "EchoIntoToolCallCard",

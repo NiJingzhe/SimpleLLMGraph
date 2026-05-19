@@ -1,0 +1,209 @@
+---
+title: SelfRef 工程实践
+description: Fork 编排、压缩策略和多键记忆的高级模式
+---
+
+# SelfRef 工程实践
+
+本页介绍用于生产环境 Agent 架构的高级 SelfRef 模式。
+
+## 压缩策略
+
+### 何时进行压缩
+
+在以下情况下应执行压缩：
+- Token 使用量接近上下文窗口限制
+- 完成了一个逻辑里程碑（任务完成、阶段转换）
+- 工作对话中包含大量过时信息（旧的工具输出、已废弃的计划）
+
+### 一次好的 Compact 调用应该怎么写
+
+```python
+payload = runtime.selfref.context.compact(
+    goal="Implement user authentication with OAuth",
+    instruction="Continue with refresh token logic. Token exchange is working.",
+    discoveries=[
+        "OAuth provider requires PKCE challenge",
+        "Access tokens expire in 1 hour",
+        "Refresh endpoint: POST /oauth/token with grant_type=refresh_token",
+    ],
+    completed=[
+        "Set up project structure",
+        "Implemented PKCE challenge generation",
+        "Built token exchange endpoint (tested, working)",
+    ],
+    current_status="Token exchange works. Next: refresh token flow.",
+    likely_next_work="Implement refresh token rotation, add token storage, write integration tests",
+    relevant_files_directories=[
+        "src/auth/oauth.py",
+        "src/auth/token_store.py",
+        "tests/test_auth.py",
+    ],
+    remember=["OAuth provider requires PKCE — never skip it"],
+)
+```
+
+关键规则：
+- `discoveries` = 已发现的、后续可能需要的事实
+- `completed` = 已完成的工作（防止 Agent 重复执行）
+- `current_status` = 停止时的状态
+- `likely_next_work` = 下一步要做什么（为恢复后的 Agent 提供方向）
+- `remember` = 简短的持久化经验教训，会作为 experience 保留（谨慎使用）
+
+### 压缩生命周期
+
+1. 在 `execute_code` 内调用 `compact(...)`
+2. 压缩被**加入队列**（不会立即生效）
+3. 当前工具批次完成后，运行时会将压缩补丁应用到对话记录
+4. 系统提示词和 experiences 被保留
+5. 工作对话被替换为摘要消息
+6. Agent 的下一轮对话从精简的上下文开始
+
+### 自动压缩模式
+
+当接近 token 限制时注入压缩指令：
+
+```python
+COMPACTION_THRESHOLD = 0.3  # 上下文窗口的 30%
+
+def should_compact(llm) -> bool:
+    used = llm.input_token_count + llm.output_token_count
+    return used > llm.context_window * COMPACTION_THRESHOLD
+
+def prepare_message(message: str) -> str:
+    if should_compact(llm):
+        return message + "\n\nAfter completing this task, compact your context."
+    return message
+```
+
+## Fork 编排
+
+### 基本 Fork 模式
+
+```python
+# 在 execute_code 内部：
+
+# 创建子任务
+handle_a = runtime.selfref.fork.spawn(
+    task="Review src/auth/ for security issues",
+    instruction="Check for: injection, auth bypass, secret leakage. Return a list of findings.",
+)
+
+handle_b = runtime.selfref.fork.spawn(
+    task="Write unit tests for src/auth/oauth.py",
+    instruction="Cover: token exchange, PKCE validation, error cases. Write to tests/test_oauth.py.",
+)
+
+print(f"Spawned: {handle_a['fork_id']}, {handle_b['fork_id']}")
+
+# ... 父任务继续处理其他工作 ...
+
+# 准备好后收集结果
+results = runtime.selfref.fork.gather_all()
+for fork_id, result in results.items():
+    print(f"{fork_id}: {result['status']}")
+    if result['status'] == 'completed':
+        print(f"  Response: {result['response'][:200]}")
+```
+
+### Fork 设计规则
+
+1. **子任务继承 fork 前的上下文** —— 它们能看到父任务在 fork 工具调用之前的对话内容，但看不到 fork 调用本身。
+
+2. **子任务是独立的** —— 它们无法读取或修改父任务的上下文。每个子任务都有自己隔离的 ReAct 循环。
+
+3. **Gather 会阻塞** —— `gather_all()` 会等待所有已创建的子任务完成。除非确实需要立即获取结果，否则不要在 spawn 后立即调用它。
+
+4. **保持任务范围明确** —— 为每个子任务提供清晰的范围、验收标准和停止条件。范围不明确的任务会浪费 token。
+
+5. **要求返回摘要** —— 告诉子任务返回简洁的结果和文件路径，而不是完整的对话记录。仅在需要检查子任务推理过程时使用 `include_history=True`。
+
+### Fork 与顺序执行的选择
+
+适合使用 Fork 的场景：
+- 任务之间相互独立（没有数据依赖）
+- 任务规模足以证明子上下文的开销是值得的
+- 并行化可以节省实际时间
+
+适合使用顺序工具调用的场景：
+- 任务之间依赖彼此的输出
+- 任务很小（每个只需一次工具调用）
+- 需要中间结果来决定下一步
+
+## 多键记忆
+
+SelfReference 支持多个记忆键，用于分区管理状态：
+
+```python
+from SimpleLLMFunc.builtin import SelfReference
+
+selfref = SelfReference()
+
+# 将不同的历史绑定到不同的键
+selfref.bind_history("coding", coding_history)
+selfref.bind_history("research", research_history)
+```
+
+使用场景：
+- 在一个应用中分离不同的 Agent 角色
+- 长期项目记忆与临时任务上下文的分离
+- 共享参考上下文与每用户对话的分离
+
+每个键都有独立的：历史记录、experiences、摘要状态和 fork 句柄。
+
+## Experience 管理
+
+### 何时使用 Remember
+
+适合作为 experience 的内容：
+- 持久性的经验教训（"这个 API 需要认证头 X"）
+- 用户偏好（"偏好简洁的输出"）
+- 项目约定（"始终使用 pytest，不使用 unittest"）
+
+不适合作为 experience 的内容：
+- 临时状态（"当前正在处理文件 X"）—— 应放在 compact 摘要中
+- 大量数据 —— experiences 存在于系统提示词中，应保持简短
+- 临时上下文 —— 使用工作消息或 compact 检查点代替
+
+### 清理 Experiences
+
+```python
+# 查看当前的 experiences
+snapshot = runtime.selfref.context.inspect()
+for exp in snapshot["experiences"]:
+    print(f"  {exp['id']}: {exp['text']}")
+
+# 移除过时的
+runtime.selfref.context.forget("exp_old_001")
+```
+
+## 生产模式：持久化 Agent
+
+```python
+repl = PyRepl(working_directory=workspace)
+file_tools = FileToolset(workspace).toolset
+
+@llm_chat(
+    llm_interface=llm,
+    toolkit=[*repl.toolset, *file_tools],
+    stream=True,
+    self_reference_key="project_agent",
+)
+async def project_agent(message: str, history: list | None = None):
+    """
+    Long-running project agent with durable memory.
+
+    Use runtime.selfref.context.remember(...) for durable project facts.
+    Use runtime.selfref.context.compact(...) at milestones.
+    Use runtime.selfref.fork.spawn(...) for parallelizable subtasks.
+    """
+    pass
+```
+
+该 Agent 具备以下能力：
+- 跨会话记忆（experiences 持久化在 SelfReference backend 中）
+- 在里程碑处压缩上下文（保持上下文精简）
+- 将工作委托给 fork（复杂任务的并行处理）
+- 完整的文件和代码访问权限（通过工具集）
+
+→ [上下文：SelfRef](/zh/context/selfref) | [API 参考：Runtime](/zh/api/runtime)

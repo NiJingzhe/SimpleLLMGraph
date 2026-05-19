@@ -33,7 +33,6 @@ class MovieReview(BaseModel):
 
 @llm_function(
     llm_interface=llm,
-    enable_event=True,
 )
 async def analyze_movie_review(review_text: str) -> MovieReview:
     """

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from SimpleLLMFunc.tool import Tool
+from SimpleLLMFunc.type.multimodal import ImgPath
 
 
 STALE_FILE_MESSAGE = (
@@ -40,6 +41,10 @@ class FileToolset:
         "Read a file with optional line range; each output line is prefixed with "
         "`<lineno> |` and the response keeps original formatting."
     )
+    READ_IMAGE_DESCRIPTION = (
+        "Read one local image file from the workspace and return it as multimodal "
+        "image content with `detail=\"high\"`."
+    )
     GREP_DESCRIPTION = (
         "Regex search over workspace files (non-hidden, non-binary). "
         "Requires a path regex to scope the search."
@@ -56,6 +61,11 @@ class FileToolset:
     READ_FILE_BEST_PRACTICES = [
         "Use start_line/end_line to limit context; line numbers are 1-based.",
         "Read the file before any modification to refresh the hash state.",
+        "Hidden files or folders are not accessible.",
+    ]
+    READ_IMAGE_BEST_PRACTICES = [
+        "Use this when the model needs to inspect a workspace-local image.",
+        "The returned image is always sent with detail='high'.",
         "Hidden files or folders are not accessible.",
     ]
     GREP_BEST_PRACTICES = [
@@ -96,6 +106,13 @@ class FileToolset:
                 description=self.READ_FILE_DESCRIPTION,
                 func=self.read_file,
                 best_practices=self.READ_FILE_BEST_PRACTICES,
+                prompt_injection_builder=prompt_injection_builder,
+            ),
+            Tool(
+                name="read_image",
+                description=self.READ_IMAGE_DESCRIPTION,
+                func=self.read_image,
+                best_practices=self.READ_IMAGE_BEST_PRACTICES,
                 prompt_injection_builder=prompt_injection_builder,
             ),
             Tool(
@@ -271,6 +288,23 @@ class FileToolset:
             "at the beginning of each line:\n"
             f"```{language}\n{body}```"
         )
+
+    async def read_image(self, path: str) -> ImgPath | str:
+        resolved, error = self._resolve_path(path)
+        if error:
+            return error
+        if resolved is None:
+            return "invalid path"
+        if not resolved.exists() or not resolved.is_file():
+            return "file does not exist"
+
+        try:
+            image = ImgPath(resolved, detail="high")
+        except (FileNotFoundError, ValueError) as exc:
+            return str(exc)
+
+        self._update_hash(resolved, self._read_bytes(resolved))
+        return image
 
     async def grep(self, pattern: str, path_pattern: str) -> str:
         if not isinstance(pattern, str) or not pattern.strip():

@@ -1,0 +1,226 @@
+---
+title: 运行时补丁
+description: 在编译边界修补基础对话记录的内部 ContextMutation 类型
+---
+
+# 运行时补丁
+
+`ContextMutation` 是 SimpleLLMFunc 的内部类型化补丁协议，用来描述 runtime 副作用对对话记录产生的增量编辑。
+
+Mutation 并不定义完整上下文。最终 LLM 请求来自：
+
+1. invocation 配置——docstring 提示词、模板参数、工具指导、输出契约、SelfRef 快照；
+2. 基础对话记录/message list——history、当前用户输入、之前的助手/工具消息；
+3. 运行时补丁——本页描述的 `ContextMutation` 对象。
+
+理解 mutation 对调试框架内部很有帮助，但应用代码通常通过工具、事件流、`history` 和 SelfRef 原语等更高层接口交互。
+
+## Mutation 联合类型
+
+```python
+ContextMutation = Union[
+    AssistantMessageMutation,
+    ToolResultMutation,
+    MultimodalToolResultMutation,
+    UserMessageMutation,
+    ContextReplaceMutation,
+    ContextSummaryMutation,
+    ExperienceRememberMutation,
+    ExperienceForgetMutation,
+    AssistantTruncatedMutation,
+    ToolCancelledMutation,
+]
+```
+
+## 标准流程补丁
+
+这些 mutation 在正常的 ReAct 循环运行中产生。
+
+### AssistantMessageMutation
+
+当 LLM 产生响应（文本、工具调用或两者兼有）时触发。
+
+```python
+@dataclass
+class AssistantMessageMutation:
+    role: Literal["assistant"] = "assistant"
+    content: Optional[str] = None
+    tool_calls: List[Dict[str, Any]] = field(default_factory=list)
+    reasoning_details: List[Dict[str, Any]] = field(default_factory=list)
+```
+
+**触发时机：** 每次成功的 LLM 调用之后。
+**效果：** 在对话记录中追加一条助手消息。
+**生产者：** ReAct 循环中的 `execute_single_llm_phase()`。
+
+### ToolResultMutation
+
+当工具执行完毕并返回文本结果时触发。
+
+```python
+@dataclass
+class ToolResultMutation:
+    tool_call_id: str
+    content: str
+    role: Literal["tool"] = "tool"
+```
+
+**触发时机：** 批量中每个工具完成执行后。
+**效果：** 追加一条工具结果消息，通过 `tool_call_id` 与对应的调用关联。
+**生产者：** `schedule_tool_batch()` → 工具执行。
+
+### MultimodalToolResultMutation
+
+当工具返回图片或混合内容（无法用简单字符串表示）时触发。
+
+```python
+@dataclass
+class MultimodalToolResultMutation:
+    tool_call_id: str
+    tool_name: str
+    arguments: str
+    user_messages: List[Dict[str, Any]]
+```
+
+**触发时机：** 工具返回 `ImgPath`、`ImgUrl` 或包含多模态内容的元组时。
+**效果：** 将工具调用替换为一条助手摘要消息 + 包含多模态内容的用户消息。这种重组是必要的，因为大多数提供商仅支持在用户消息中包含图片。
+**生产者：** `schedule_tool_batch()` 处理多模态工具返回。
+
+### UserMessageMutation
+
+当需要在循环中途注入新的用户消息时触发。
+
+```python
+@dataclass
+class UserMessageMutation:
+    message: Dict[str, Any]
+```
+
+**触发时机：** 在正常流程中较少见。由输入路由（如 TUI 工具输入）或自定义 hook 使用。
+**效果：** 在对话记录中追加一条用户消息。
+**生产者：** 自定义 hook、`AgentInputRouter`。
+
+## 对话记录重置补丁
+
+这些 mutation 替换或重组工作对话记录。
+
+### ContextReplaceMutation
+
+硬重置——替换整个消息列表。
+
+```python
+@dataclass
+class ContextReplaceMutation:
+    messages: List[Dict[str, Any]]
+```
+
+**触发时机：** 外部历史覆盖、分叉上下文注入。
+**效果：** 丢弃当前对话记录，整体替换为 `messages`。
+**生产者：** SelfRef 分叉创建（设置子上下文）、自定义 hook。
+
+### ContextSummaryMutation
+
+上下文压缩——将对话记录替换为摘要，并可选地存储新经验。
+
+```python
+@dataclass
+class ContextSummaryMutation:
+    summary_message: Dict[str, Any]
+    remember: List[Dict[str, str]] = field(default_factory=list)
+```
+
+**触发时机：** 在工具中调用 `runtime.selfref.context.compact(...)`。
+**效果：**
+1. 保留系统提示词消息
+2. 将工作对话记录替换为 `summary_message`
+3. 将 `remember` 中的条目存储为持久经验
+
+**生产者：** SelfRef 的 `compact` 原语。
+
+## 经验补丁
+
+这些 mutation 更新存储在系统上下文中的持久经验（通过 SelfRef）。
+
+### ExperienceRememberMutation
+
+存储一条新的持久经验。
+
+```python
+@dataclass
+class ExperienceRememberMutation:
+    text: str
+```
+
+**触发时机：** 调用 `runtime.selfref.context.remember(...)`。
+**效果：** 将文本作为新的经验条目添加到系统上下文的经验区域。
+**生产者：** SelfRef 的 `remember` 原语。
+
+### ExperienceForgetMutation
+
+通过 ID 移除已存储的经验。
+
+```python
+@dataclass
+class ExperienceForgetMutation:
+    experience_id: str
+```
+
+**触发时机：** 调用 `runtime.selfref.context.forget(...)`。
+**效果：** 从系统上下文中移除匹配 ID 的经验。
+**生产者：** SelfRef 的 `forget` 原语。
+
+## 中止补丁
+
+这些 mutation 处理中断和取消的情况。
+
+### AssistantTruncatedMutation
+
+记录被中断的、仅部分接收的助手响应。
+
+```python
+@dataclass
+class AssistantTruncatedMutation:
+    partial_content: str
+    abort_reason: str = ""
+```
+
+**触发时机：** LLM 流式传输过程中 `AbortSignal` 触发。
+**效果：** 将部分内容作为带截断元数据的助手消息追加。
+**生产者：** `execute_single_llm_phase()` 在中止时产生。
+
+### ToolCancelledMutation
+
+记录在完成前被中止的工具调用。
+
+```python
+@dataclass
+class ToolCancelledMutation:
+    tool_call_id: str
+    tool_name: str
+    abort_reason: str = ""
+```
+
+**触发时机：** 工具执行过程中 `AbortSignal` 触发。
+**效果：** 追加一条已取消的工具结果消息，确保对话记录在结构上保持有效（每个工具调用都有对应的结果）。
+**生产者：** `schedule_tool_batch()` 在中止时产生。
+
+## Mutation 应用顺序
+
+Mutation 按照产生的顺序依次应用。在单次 ReAct 迭代中：
+
+1. **Hook mutation**（来自 SelfRef session 的 `collect_context_mutations`）——最先应用
+2. **LLM mutation**（AssistantMessage）——来自 LLM 调用
+3. **工具 mutation**（ToolResult、MultimodalToolResult、Experience*）——来自工具执行
+4. **中止 mutation**（AssistantTruncated、ToolCancelled）——如果发生了中断
+
+经验类 mutation（Remember/Forget）会被累积，并在下一个非经验 mutation 应用之前批量提交。这确保了经验在任何可能引用它们的上下文替换之前就已存储完毕。
+
+## 核心保证
+
+Runtime 产生的对话记录编辑会通过这个补丁协议流转。这意味着 LLM 调用、工具执行、SelfRef 原语和中断处理不会直接修改 live transcript。
+
+这并不意味着所有 LLM 可见输入都来自 mutation。初始对话记录、docstring / 系统提示词、模板参数、工具指导和 SelfRef 快照都是独立的编译输入。
+
+<Card title="下一节：编译管道" icon="microchip" href="/zh/context/compile-pipeline">
+  invocation 配置、对话记录和运行时补丁如何被变换为最终的 LLM 请求。
+</Card>

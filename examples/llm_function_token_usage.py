@@ -23,7 +23,6 @@ llm = OpenAICompatible.load_from_json_file(provider_json_path)["openrouter"][
 # 定义一个简单的 LLM 函数，用于文本摘要
 @llm_function(
     llm_interface=llm,
-    enable_event=True,  # 启用事件流
 )
 async def summarize_text(text: str) -> str:
     """
@@ -60,7 +59,7 @@ async def main():
     total_tokens = 0
 
     # 调用 LLM 函数，处理事件流
-    async for output in summarize_text(text=test_text):
+    async for output in summarize_text.stream(text=test_text):
         # 处理响应结果
         if is_response_yield(output):
             # output.response 已经是解析后的字符串，不是原始的 ChatCompletion

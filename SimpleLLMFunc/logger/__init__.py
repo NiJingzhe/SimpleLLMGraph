@@ -47,12 +47,12 @@ GLOBAL_LOGGER = setup_logger(
 )
 
 # 记录日志系统初始化完成
-push_info(f"全局日志系统初始化完成, 控制台日志级别: {_log_level}")
+push_info(f"Global logging system initialized, console log level: {_log_level}")
 
 # 确保启动时打印一条测试日志
-push_debug("测试DEBUG级别日志")
-app_log("测试INFO级别日志(app_log)")
-push_info("测试INFO级别日志(push_info)")
+push_debug("Test DEBUG level log")
+app_log("Test INFO level log (app_log)")
+push_info("Test INFO level log (push_info)")
 
 __all__ = [
     "app_log",

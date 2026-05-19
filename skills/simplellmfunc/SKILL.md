@@ -5,20 +5,20 @@ license: MIT
 compatibility: "Python 3.12+ repo with async execution and OpenAI-compatible chat endpoints or OpenAI Responses API endpoints configured through provider.json."
 metadata:
   project: SimpleLLMFunc
-  version: "0.7.8"
+  version: "0.8.0"
 ---
 
 # SimpleLLMFunc Usage
 
 ## When to use this skill
 - Use this skill for application-level work built on top of SimpleLLMFunc.
-- Use it when the task mentions `llm_function`, `llm_chat`, `tool`, `OpenAICompatible`, `OpenAIResponsesCompatible`, `provider.json`, `reasoning`, `enable_event`, `PyRepl`, `SelfReference`, `FileToolset`, or the built-in TUI.
+- Use it when the task mentions `llm_function`, `llm_chat`, `tool`, `OpenAICompatible`, `OpenAIResponsesCompatible`, `provider.json`, `reasoning`, `PyRepl`, `SelfReference`, `FileToolset`, or the built-in TUI.
 - Do not use this skill for framework-internal refactors; use `simplellmfunc-developer` for that.
 
 ## Core philosophy
-- Treat the LLM call like a normal Python function call.
-- Put the prompt in the function docstring.
-- Let Python parameters and return annotations define the contract.
+- **LLM is Function**: treat the LLM call like a normal Python function call — signature, type hints, return value.
+- **Prompt as Code**: put the prompt in the function docstring. Code and prompt are never separated.
+- **Context-Centric**: each LLM request is compiled from invocation configuration, a base transcript/history, and internal runtime patches. `ContextMutation` is the internal patch protocol that prevents tools and SelfRef from directly modifying the live ReAct transcript.
 - Keep orchestration in Python instead of hiding it in giant prompt strings.
 - Prefer small, typed, composable building blocks.
 
@@ -39,12 +39,11 @@ This is critical for writing good prompts in SimpleLLMFunc: your docstring is im
 Write `llm_function` docstrings as task policy, quality bar, constraints, and style guidance. Do not waste docstring space restating parameter schemas or low-level output formatting that the framework already injects.
 
 ### `llm_chat`
-- Base system prompt is either:
-  - the latest `system` message in `history`, if one exists, or
-  - the function docstring otherwise
+- Base system prompt is assembled from two sources:
+  - `DataFromAgentConfig` (docstring + template params + tool specs)
+  - `DataFromSelfRef` (if `self_reference_key` is set: experiences, summary, working messages)
 - Then the framework prepends `<tool_best_practices>` when tools exist.
 - Then it appends a `<must_principles>` block that tells the model to use native structured tool calls instead of writing fake tool calls in assistant text.
-- Older `system` messages from history are filtered out; only the latest one wins.
 - Current turn data is added as the user message, not merged into the system prompt.
 
 Write `llm_chat` docstrings as stable assistant policy and long-lived behavior. Put current task content in the function call arguments, not in the docstring.
@@ -53,8 +52,33 @@ Write `llm_chat` docstrings as stable assistant policy and long-lived behavior. 
 - For `llm_function`, think: function contract + execution strategy.
 - For `llm_chat`, think: assistant identity + durable rules.
 - Put tool-usage advice in tool `best_practices` when possible, not only in the main docstring.
-- If you need to durably change a chat agent's context mid-run, use the latest history `system` message or self-reference context helpers such as `runtime.selfref.context.remember(...)` / `runtime.selfref.context.compact(...)` instead of trying to mutate old docstrings.
-- When `llm_chat` is bound to `SelfReference`, the framework syncs turn state automatically through ReAct lifecycle hooks. Treat `runtime.selfref.context.*` as the supported way to change durable context instead of editing old history messages in place.
+- If you need to durably change a chat agent's context mid-run, use self-reference context helpers such as `runtime.selfref.context.remember(...)` / `runtime.selfref.context.compact(...)` instead of trying to mutate old docstrings.
+- When `llm_chat` is bound to `SelfReference`, the framework syncs turn state automatically through the `SelfRefSession` ReAct lifecycle hooks. Treat `runtime.selfref.context.*` as the supported way to change durable context instead of editing old history messages in place.
+
+## Context-Centric architecture
+
+The framework compiles each LLM request from three inputs:
+
+1. invocation configuration: docstring prompt, template params, tool guidance, output contract, and SelfRef snapshot;
+2. base transcript/history: previous messages plus the current user input;
+3. internal runtime patches: `ContextMutation` objects produced by LLM calls, tools, SelfRef primitives, compaction, and abort/cancel handling.
+
+The main internal rule is: **runtime side effects must not directly edit the live transcript**. They produce typed patches, and the compile boundary applies those patches in order before rendering the provider-facing message list.
+
+This means same-turn selfref changes (remember, forget, compact) take effect at the next compile boundary, not immediately. It does not mean that docstrings, template params, tool schemas, or initial history are produced by mutations.
+
+### SelfRef: Meta Context Editing
+
+SelfRef enables an agent to read and edit durable context at runtime, while respecting the internal transcript patch boundary:
+
+| Operation | What it does | Internal patch produced |
+|-----------|-------------|-------------------------|
+| **Remember** | Add durable experience that survives across turns | `ExperienceRememberMutation` |
+| **Forget** | Remove experience by ID | `ExperienceForgetMutation` |
+| **Compact** | Replace working transcript with a structured summary | `ContextSummaryMutation` |
+| **Fork** | Spawn a child agent with inherited context snapshot | (sub-agent runs independently) |
+
+These operations take effect at the next compile boundary — SelfRef cannot bypass compile to modify the live transcript directly.
 
 ## Fast start modes
 - Project mode: load models from `provider.json` with `OpenAICompatible.load_from_json_file(...)` or `OpenAIResponsesCompatible.load_from_json_file(...)` when you have shared config or multiple models.
@@ -244,6 +268,40 @@ If you remember only one rule, remember this:
 
 ## Best-practice patterns
 
+### Build a general agent (Recommended starting point)
+
+```python
+from SimpleLLMFunc import llm_chat, OpenAICompatible, tui
+from SimpleLLMFunc.builtin import PyRepl, FileToolset
+
+llm = OpenAICompatible.load_from_json_file("provider.json")["openrouter"]["gpt-5.4"]
+repl = PyRepl()
+file_tools = FileToolset("./sandbox").toolset
+
+@tui
+@llm_chat(
+    llm_interface=llm,
+    toolkit=[*repl.toolset, *file_tools],
+    stream=True,
+    self_reference_key="agent_main",
+)
+async def agent(message: str, history=None):
+    """You are a practical local coding agent.
+
+    ## Rules
+    - Read files before editing. Prefer small, local edits.
+    - Use execute_code for Python. Use file tools for read/grep/sed.
+    - When a milestone is done, compact your context via:
+      runtime.selfref.context.compact(...)
+    - For parallel subtasks, spawn forks via:
+      runtime.selfref.fork.spawn(...)
+      then gather with runtime.selfref.fork.gather_all(...)
+    """
+
+if __name__ == "__main__":
+    agent()  # launches an interactive TUI
+```
+
 ### Instant shell-first usage (Recommended for one-offs)
 
 Use the direct constructor path when you want to turn SimpleLLMFunc into a shell ability with almost no setup besides pasting your literal model settings.
@@ -277,7 +335,7 @@ PY
 
 For a shell agent with file tools and REPL, see `reference/instant-use.md` and `examples/instant_chat_agent.py`.
 
-### Typed `llm_function` (Recommended)
+### Typed `llm_function`
 
 ```python
 import asyncio
@@ -325,6 +383,7 @@ asyncio.run(main())
 import asyncio
 
 from SimpleLLMFunc import OpenAICompatible, llm_chat, tool
+from SimpleLLMFunc.hooks.stream import is_response_yield
 
 
 @tool
@@ -357,9 +416,10 @@ async def tutor(message: str, history: list[dict[str, str]] | None = None):
 
 async def main() -> None:
     history: list[dict[str, str]] = []
-    async for chunk, history in tutor("What is 12.5 times 8?", history):
-        if chunk:
-            print(chunk, end="")
+    async for output in tutor("What is 12.5 times 8?", history):
+        if is_response_yield(output):
+            print(output.response, end="")
+            history = output.messages
 
 
 asyncio.run(main())
@@ -406,7 +466,9 @@ asyncio.run(main())
 - Instant snippets can call the decorated function directly at top level with `asyncio.run(...)`; no `__main__` guard is required.
 - `max_tool_calls=None` means no framework-imposed tool-call cap. Set an explicit integer if you need a guardrail.
 - Complex structured outputs are parsed from XML-oriented contracts internally. Do not manually force JSON unless you intentionally want plain-text behavior.
-- `llm_chat(enable_event=True)` yields `ReactOutput` events and responses, not `(chunk, history)` tuples.
+- `@llm_function` returns an `LLMFunction` callable instance; use `await fn(...)` for the parsed result and `fn.stream(...)` for `ReactOutput`.
+- `@llm_chat` returns an `LLMChat` callable instance; calling it always produces `ReactOutput` events/responses. Consume with `async for output in agent(...)` and use `is_event_yield(output)` / `is_response_yield(output)` to route.
+- There is no `enable_event` or `return_mode` decorator option. Do not write old `(chunk, history)` consumers.
 - `too_long_to_file=True` keeps roughly the first 20000 tokens in chat and writes the full tool result to a temp file.
 - `PyRepl.reset()` clears REPL variables but keeps runtime backends and self-reference memory.
 - `runtime.selfref.context.compact(...)` is queued first. When called from a tool run, the compacted context is applied before the next same-turn LLM step when possible, and finalize still commits any leftover queued compaction before the turn ends.
@@ -414,6 +476,7 @@ asyncio.run(main())
 - `runtime.selfref.fork.spawn(...)` children inherit the pre-fork context snapshot, not the parent's in-flight fork tool-call scene.
 - `runtime.selfref.fork.gather_all(...)` returns `dict[fork_id -> ForkResult]`. Check `status` first, then read `response` or `result`; compact results omit child history unless you request `include_history=True`.
 - `FileToolset` is workspace-scoped and read-before-write guarded.
+- Runtime side effects must go through the internal patch boundary. Do not try to directly modify the message list of a running agent — use `runtime.selfref.context.*` primitives instead.
 
 ## Load more context only when needed
 - Philosophy and core concepts: `reference/philosophy-and-concepts.md`
@@ -421,7 +484,7 @@ asyncio.run(main())
 - System prompt construction and prompt-writing rules: `reference/system-prompt-construction.md`
 - Instant shell-first setup and constructor usage: `reference/instant-use.md`
 - Provider and environment setup: `reference/configuration.md`
-- Decorators, tools, file tools, and event mode: `reference/decorators-and-tools.md`
+- Decorators, tools, file tools, and event streams: `reference/decorators-and-tools.md`
 - PyRepl, runtime primitives, and selfref: `reference/pyrepl-runtime.md`
 - Non-obvious behavior: `reference/gotchas.md`
 - Mirrored repo docs: `reference/docs-source/quickstart.md`, `reference/docs-source/guide.md`, `reference/docs-source/detailed_guide/`

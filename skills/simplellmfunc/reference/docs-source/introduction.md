@@ -1,4 +1,4 @@
-![cover](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/img/repocover_new.png?raw=true)
+![cover](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/img/repocover_1_1.png?raw=true)
 
 # 项目介绍
 
@@ -232,7 +232,7 @@ asyncio.run(main())
 - **类型安全**: 支持 Python 类型注解和 Pydantic 模型，确保数据结构正确。
 - **异步支持**: `@llm_function` 与 `@llm_chat` 原生支持异步调用，无需额外别名。
 - **多模态支持**: 支持文本、图片 URL、本地图片路径的多模态输入，同时支持工具多模态返回。
-- **事件流与可观测性**: 通过 `enable_event=True` 获取完整 ReAct 事件流与 `origin` 元数据，便于 UI 路由与性能统计。
+- **事件流与可观测性**: 通过 `ReactOutput` 获取完整 ReAct 事件流与 `origin` 元数据，便于 UI 路由与性能统计。
 - **SelfReference + PyRepl 运行时**: 提供内置 PyRepl 与 selfref primitives，支持持久记忆、fork/spawn/wait 等自分叉能力。
 - **步骤化装饰器流水线**: `llm_decorator/steps` 将 Prompt 构建、签名解析、ReAct 和响应解析拆分为可组合步骤。
 - **基础引擎模块化**: `base/messages`、`base/tool_call`、`base/type_resolve` 独立演进，类型解析与多模态处理更稳健。

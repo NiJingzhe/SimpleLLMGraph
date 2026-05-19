@@ -78,7 +78,6 @@ async def batch_process(
 @llm_function(
     llm_interface=llm,
     toolkit=[batch_process],
-    enable_event=True,
 )
 async def process_task(task: str) -> str:
     """

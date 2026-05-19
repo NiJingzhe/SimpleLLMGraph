@@ -8,6 +8,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from openai.types.chat.chat_completion import ChatCompletion, Choice
+from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.types.chat.chat_completion_chunk import (
     ChatCompletionChunk,
     Choice as ChunkChoice,
@@ -51,6 +53,27 @@ def _make_usage_chunk(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
+        ),
+    )
+
+
+def _make_completion(content: str = "hello") -> ChatCompletion:
+    return ChatCompletion(
+        id="completion-id",
+        choices=[
+            Choice(
+                finish_reason="stop",
+                index=0,
+                message=ChatCompletionMessage(role="assistant", content=content),
+            )
+        ],
+        created=123,
+        model="test-model",
+        object="chat.completion",
+        usage=CompletionUsage(
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
         ),
     )
 
@@ -392,3 +415,209 @@ def test_load_from_json_file_reads_context_window(tmp_path) -> None:
 
     assert providers["openai"]["gpt-4o-mini"].context_window == 128000
     assert providers["openai"]["gpt-4.1"].context_window == DEFAULT_CONTEXT_WINDOW
+
+
+def test_load_from_json_file_reads_api_params(tmp_path) -> None:
+    """Provider JSON api_params should be stored and accessible on instances."""
+
+    provider_json = tmp_path / "provider.json"
+    provider_json.write_text(
+        json.dumps(
+            {
+                "openai": [
+                    {
+                        "model_name": "o3-mini",
+                        "api_keys": ["test-key"],
+                        "base_url": "https://api.openai.com/v1",
+                        "api_params": {"reasoning_effort": "high"},
+                    },
+                    {
+                        "model_name": "gpt-4o",
+                        "api_keys": ["test-key"],
+                        "base_url": "https://api.openai.com/v1",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    providers = OpenAICompatible.load_from_json_file(str(provider_json))
+
+    assert providers["openai"]["o3-mini"]._api_params == {"reasoning_effort": "high"}
+    assert providers["openai"]["gpt-4o"]._api_params == {}
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_passes_api_params(tmp_path) -> None:
+    """api_params from provider.json should be passed to the API call."""
+
+    provider_json = tmp_path / "provider.json"
+    provider_json.write_text(
+        json.dumps(
+            {
+                "test": [
+                    {
+                        "model_name": "o3-mini",
+                        "api_keys": ["test-key"],
+                        "base_url": "https://example.com/v1",
+                        "api_params": {"reasoning_effort": "high", "temperature": 0.7},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    providers = OpenAICompatible.load_from_json_file(str(provider_json))
+    llm = providers["test"]["o3-mini"]
+
+    create_mock = AsyncMock(
+        return_value=_NeverEndingStream([
+            _make_chunk("hello", "stop"),
+            _make_usage_chunk(10, 5, 15),
+        ])
+    )
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create_mock))
+    )
+    llm.token_bucket.acquire = AsyncMock(return_value=True)
+    llm._get_or_create_client = AsyncMock(return_value=fake_client)
+
+    chunks = []
+    async for chunk in llm.chat_stream(messages=[{"role": "user", "content": "hi"}]):
+        chunks.append(chunk)
+
+    assert create_mock.await_count == 1
+    create_kwargs = create_mock.await_args_list[0].kwargs
+    assert create_kwargs.get("reasoning_effort") == "high"
+    assert create_kwargs.get("temperature") == 0.7
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_call_kwargs_override_api_params(tmp_path) -> None:
+    """Call-level kwargs should override instance api_params."""
+
+    provider_json = tmp_path / "provider.json"
+    provider_json.write_text(
+        json.dumps(
+            {
+                "test": [
+                    {
+                        "model_name": "o3-mini",
+                        "api_keys": ["test-key"],
+                        "base_url": "https://example.com/v1",
+                        "api_params": {"reasoning_effort": "low"},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    providers = OpenAICompatible.load_from_json_file(str(provider_json))
+    llm = providers["test"]["o3-mini"]
+
+    create_mock = AsyncMock(
+        return_value=_NeverEndingStream([
+            _make_chunk("hello", "stop"),
+            _make_usage_chunk(10, 5, 15),
+        ])
+    )
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create_mock))
+    )
+    llm.token_bucket.acquire = AsyncMock(return_value=True)
+    llm._get_or_create_client = AsyncMock(return_value=fake_client)
+
+    chunks = []
+    async for chunk in llm.chat_stream(
+        messages=[{"role": "user", "content": "hi"}],
+        reasoning_effort="high",  # override
+    ):
+        chunks.append(chunk)
+
+    assert create_mock.await_count == 1
+    create_kwargs = create_mock.await_args_list[0].kwargs
+    # Call-level override should win
+    assert create_kwargs.get("reasoning_effort") == "high"
+
+
+@pytest.mark.asyncio
+async def test_chat_passes_api_params(tmp_path) -> None:
+    """api_params should also be passed by non-streaming chat (used by llm_function)."""
+
+    provider_json = tmp_path / "provider.json"
+    provider_json.write_text(
+        json.dumps(
+            {
+                "test": [
+                    {
+                        "model_name": "o3-mini",
+                        "api_keys": ["test-key"],
+                        "base_url": "https://example.com/v1",
+                        "api_params": {"reasoning_effort": "high", "temperature": 0.7},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    providers = OpenAICompatible.load_from_json_file(str(provider_json))
+    llm = providers["test"]["o3-mini"]
+
+    create_mock = AsyncMock(return_value=_make_completion())
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create_mock))
+    )
+    llm.token_bucket.acquire = AsyncMock(return_value=True)
+    llm._get_or_create_client = AsyncMock(return_value=fake_client)
+
+    await llm.chat(messages=[{"role": "user", "content": "hi"}])
+
+    assert create_mock.await_count == 1
+    create_kwargs = create_mock.await_args_list[0].kwargs
+    assert create_kwargs.get("reasoning_effort") == "high"
+    assert create_kwargs.get("temperature") == 0.7
+
+
+@pytest.mark.asyncio
+async def test_chat_call_kwargs_override_api_params(tmp_path) -> None:
+    """Call-level kwargs should override api_params for non-streaming chat."""
+
+    provider_json = tmp_path / "provider.json"
+    provider_json.write_text(
+        json.dumps(
+            {
+                "test": [
+                    {
+                        "model_name": "o3-mini",
+                        "api_keys": ["test-key"],
+                        "base_url": "https://example.com/v1",
+                        "api_params": {"reasoning_effort": "low"},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    providers = OpenAICompatible.load_from_json_file(str(provider_json))
+    llm = providers["test"]["o3-mini"]
+
+    create_mock = AsyncMock(return_value=_make_completion())
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create_mock))
+    )
+    llm.token_bucket.acquire = AsyncMock(return_value=True)
+    llm._get_or_create_client = AsyncMock(return_value=fake_client)
+
+    await llm.chat(
+        messages=[{"role": "user", "content": "hi"}],
+        reasoning_effort="high",
+    )
+
+    assert create_mock.await_count == 1
+    create_kwargs = create_mock.await_args_list[0].kwargs
+    assert create_kwargs.get("reasoning_effort") == "high"

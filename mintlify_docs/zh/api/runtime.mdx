@@ -1,0 +1,225 @@
+---
+title: 运行时
+description: "PrimitivePack、PrimitiveRegistry、PrimitiveSpec 及相关类型的 API 参考"
+---
+
+# 运行时 API 参考
+
+## PrimitivePack
+
+```python
+from SimpleLLMFunc.runtime import PrimitivePack
+```
+
+具有共享后端的命名原语（primitive）集合。
+
+```python
+@dataclass
+class PrimitivePack:
+    namespace: str                          # e.g., "selfref", "metrics"
+    backend: RuntimePrimitiveBackend        # Stateful backend instance
+    primitives: List[PrimitiveHandler]      # Registered primitive functions
+    guide: Optional[Dict[str, Any]] = None  # Namespace documentation
+```
+
+### 示例
+
+```python
+from SimpleLLMFunc.runtime import PrimitivePack, RuntimePrimitiveBackend, primitive
+
+class MyBackend(RuntimePrimitiveBackend):
+    pass
+
+@primitive
+async def my_action(ctx: PrimitiveCallContext, arg: str) -> dict:
+    """Do something.
+
+    Args:
+        arg: Input argument.
+
+    Returns:
+        Result dict.
+
+    Best Practices:
+        - Use for X.
+    """
+    return {"result": arg}
+
+pack = PrimitivePack(
+    namespace="myns",
+    backend=MyBackend(),
+    primitives=[my_action],
+    guide={"namespace": "myns", "overview": "My custom primitives."},
+)
+```
+
+---
+
+## @primitive
+
+```python
+from SimpleLLMFunc.runtime import primitive
+```
+
+将函数注册为运行时原语的装饰器。
+
+### 要求
+
+- 第一个参数必须是 `ctx: PrimitiveCallContext`
+- 文档字符串必须包含 `Best Practices` 部分
+- 必须是 `async def`
+
+```python
+@primitive
+async def my_primitive(ctx: PrimitiveCallContext, param: str) -> dict:
+    """Description.
+
+    Args:
+        param: Description.
+
+    Returns:
+        Result.
+
+    Best Practices:
+        - When to use this primitive.
+    """
+    return {"value": param}
+```
+
+---
+
+## PrimitiveCallContext
+
+```python
+from SimpleLLMFunc.runtime import PrimitiveCallContext
+```
+
+传递给每个原语处理器的运行时上下文。
+
+```python
+@dataclass
+class PrimitiveCallContext:
+    backend: RuntimePrimitiveBackend    # The pack's backend
+    fork_context: Optional[ForkContext] # Fork info if inside a fork
+    event_emitter: ToolEventEmitter     # For emitting custom events
+```
+
+---
+
+## ForkContext
+
+```python
+from SimpleLLMFunc.runtime import ForkContext
+```
+
+关于当前分叉（fork）执行上下文的信息。
+
+```python
+@dataclass
+class ForkContext:
+    parent_pack_name: str
+    backend_name: str
+    child_fork_id: str | None = None
+    source_memory_key: str | None = None
+    metadata: dict[str, Any] | None = None
+```
+
+---
+
+## PrimitiveSpec
+
+```python
+from SimpleLLMFunc.runtime import PrimitiveSpec
+```
+
+暴露给模型的可发现性合约。
+
+```python
+@dataclass
+class PrimitiveSpec:
+    name: str                                  # Full qualified name (e.g., "selfref.context.remember")
+    description: str                           # What it does
+    parameters: List[PrimitiveParameterSpec]   # Parameter descriptions
+    returns: str                               # Return type description
+    best_practices: List[str]                  # Usage guidance
+```
+
+---
+
+## PrimitiveParameterSpec
+
+```python
+@dataclass
+class PrimitiveParameterSpec:
+    name: str
+    type: str
+    description: str
+    required: bool = True
+    default: Optional[Any] = None
+```
+
+---
+
+## PrimitiveRegistry
+
+```python
+from SimpleLLMFunc.runtime import PrimitiveRegistry
+```
+
+管理已安装的原语包并路由原语调用。
+
+### 关键方法
+
+| 方法 | 描述 |
+|------|------|
+| `install_pack(pack)` | 注册一个 PrimitivePack |
+| `call(name, **kwargs)` | 按限定名执行原语 |
+| `list_primitives()` | 列出所有已注册的原语名称 |
+| `get_spec(name)` | 获取某个原语的 PrimitiveSpec |
+| `list_specs()` | 获取所有规格 |
+| `list_backends()` | 列出已安装的后端包 |
+
+---
+
+## RuntimePrimitiveBackend
+
+```python
+from SimpleLLMFunc.runtime import RuntimePrimitiveBackend
+```
+
+原语包后端的基类。继承此类以创建有状态后端。
+
+```python
+class RuntimePrimitiveBackend:
+    """Base class. Override to add state."""
+    pass
+```
+
+---
+
+## 内置元原语
+
+在 PyRepl 中始终可用，无需安装任何包：
+
+| 调用 | 返回值 |
+|------|--------|
+| `runtime.list_primitives()` | `List[str]` — 所有原语名称 |
+| `runtime.list_primitive_specs()` | `List[PrimitiveSpec]` — 所有规格 |
+| `runtime.get_primitive_spec(name)` | `PrimitiveSpec` — 单个规格 |
+| `runtime.list_backends()` | `List[str]` — 已安装的包 |
+
+---
+
+## SelfRef 包注册
+
+```python
+from SimpleLLMFunc.runtime import build_self_reference_pack, register_self_reference_primitives
+
+# Build the pack
+pack = build_self_reference_pack(selfref_backend)
+
+# Or register directly into a PyRepl
+register_self_reference_primitives(repl, selfref_backend)
+```
+
+SelfRef 包在 `runtime.selfref.context.*` 和 `runtime.selfref.fork.*` 命名空间下提供原语。

@@ -1,0 +1,200 @@
+---
+title: "@llm_chat"
+description: 支持历史记录、工具、流式传输和 SelfRef 的多轮对话智能体
+---
+
+# @llm_chat
+
+`@llm_chat` 创建一个多轮对话智能体。它管理历史记录、执行带工具的 ReAct 循环、支持流式响应，并可选地集成 SelfRef 实现持久化上下文。
+
+## 基本用法
+
+```python
+from SimpleLLMFunc import OpenAICompatible, llm_chat
+
+models = OpenAICompatible.load_from_json_file("provider.json")
+llm = models["openrouter"]["openai/gpt-4o"]
+
+
+@llm_chat(llm_interface=llm, stream=True)
+async def assistant(message: str, history: list | None = None):
+    """
+    You are a helpful, concise assistant.
+    Answer directly without unnecessary preamble.
+    """
+    pass
+```
+
+## 历史记录管理
+
+`history` 参数（或 `chat_history`）是特殊参数。框架会：
+1. 将你提供的 history 作为对话记录
+2. 追加当前用户消息
+3. 运行 ReAct 循环
+4. 在 `output.messages` 中返回更新后的历史记录
+
+```python
+history = []
+
+async for output in assistant("What is Python?", history):
+    if is_response_yield(output):
+        print(output.response)
+        history = output.messages  # 保存以供下一轮使用
+
+# 下一轮对话——智能体记得之前的对话
+async for output in assistant("What are its main features?", history):
+    ...
+```
+
+历史记录是**外部管理**的——你自行控制存储、持久化和分支。
+
+## 流式传输
+
+设置 `stream=True` 后，你会以事件的形式接收数据块：
+
+```python
+from SimpleLLMFunc.hooks import is_event_yield, LLMChunkArriveEvent
+
+async for output in assistant("Tell me about Python", history):
+    if is_event_yield(output):
+        if isinstance(output.event, LLMChunkArriveEvent):
+            print(output.event.accumulated_content, end="", flush=True)
+    elif is_response_yield(output):
+        history = output.messages
+```
+
+设置 `stream=False` 时，模型响应会作为单个 `ResponseYield` 一次性返回。
+
+## 工具
+
+```python
+@llm_chat(llm_interface=llm, toolkit=[search, calculate], stream=True, max_tool_calls=10)
+async def agent(message: str, history: list | None = None):
+    """
+    A research assistant. Use search for facts, calculate for math.
+    Always cite your sources.
+    """
+    pass
+```
+
+ReAct 循环自动处理工具调用：
+1. LLM 决定调用工具 → `ToolCallStartEvent`
+2. 框架执行工具 → `ToolCallEndEvent`
+3. 运行时将工具结果记录为内部对话记录补丁
+4. 重新编译上下文 → LLM 看到修补后的对话记录 → 决定下一步操作
+
+`max_tool_calls` 限制每次调用中工具调用的总次数。默认值由框架定义。`None` 表示不限制。
+
+## SelfRef 集成
+
+对于需要持久化记忆、上下文压缩或子智能体分叉的场景：
+
+```python
+from SimpleLLMFunc.builtin import PyRepl
+
+repl = PyRepl()
+
+
+@llm_chat(
+    llm_interface=llm,
+    toolkit=[*repl.toolset],
+    stream=True,
+    self_reference_key="agent_main",
+)
+async def coding_agent(message: str, history: list | None = None):
+    """
+    A coding agent with persistent memory.
+    Use runtime.selfref.context.remember(...) to store durable lessons.
+    Use runtime.selfref.context.compact(...) when context grows large.
+    """
+    pass
+```
+
+设置 `self_reference_key` 后，框架会：
+- 将 `SelfReference` 后端绑定到该 key
+- 为每次调用创建 `SelfRefSession`
+- 在 PyRepl 中提供 selfref 原语
+- 每轮对话后持久化更新的历史记录
+
+详见 [SelfRef](/zh/context/selfref) 了解完整的上下文模型。
+
+## 模板参数
+
+在运行时向系统提示词注入动态值：
+
+```python
+@llm_chat(llm_interface=llm, toolkit=[...])
+async def agent(message: str, history: list | None = None):
+    """
+    You are an assistant for {project_name}.
+
+    Workspace: {workspace_path}
+    Git branch: {git_branch}
+    """
+    pass
+
+async for output in agent(
+    "Fix the bug",
+    history,
+    _template_params={
+        "project_name": "MyApp",
+        "workspace_path": "/src",
+        "git_branch": "main",
+    },
+):
+    ...
+```
+
+## 返回模式
+
+| 模式 | 行为 |
+|------|------|
+| `"text"`（默认） | `output.response` 是最终的文本字符串 |
+| `"raw"` | `output.response` 是提供商返回的原始消息字典 |
+
+## 系统提示词构建
+
+对于 `@llm_chat`，最终的系统提示词由多个来源构建：
+
+1. **文档字符串** → 基础系统提示词（应用模板参数后）
+2. **工具最佳实践** → 以 `<tool_best_practices>` 块添加到前部
+3. **必要原则** → 以 `<must_principles>` 块追加到末尾（使用原生工具调用）
+4. **SelfRef 经验** → 如果激活则渲染到系统提示词中
+5. **历史记录中最新的系统消息** → 如果存在则覆盖文档字符串
+
+将文档字符串编写为**稳定的智能体策略**——身份定义、行为规则和长期约束。将每轮变化的上下文放在参数或模板参数中。
+
+## 并发会话
+
+可以同时运行多个独立的对话：
+
+```python
+# 每次调用使用独立的历史记录——没有共享状态
+task1 = assistant("Question A", history_a)
+task2 = assistant("Question B", history_b)
+
+# 并发执行
+results = await asyncio.gather(
+    consume_stream(task1),
+    consume_stream(task2),
+)
+```
+
+## 参数参考
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `llm_interface` | `LLM_Interface` | 必填 | 要调用的模型 |
+| `toolkit` | `List[Tool]` | `None` | 可用工具 |
+| `max_tool_calls` | `int \| None` | 框架默认值 | 工具调用次数限制 |
+| `stream` | `bool` | `False` | 启用流式传输 |
+| `self_reference` | `SelfReference \| None` | `None` | 显式指定 selfref 后端 |
+| `self_reference_key` | `str \| None` | `None` | 自动为该 key 创建 selfref |
+| `**llm_kwargs` | `Any` | — | 传递给 LLM 的参数（temperature 等） |
+
+调用时的特殊参数：
+- `_template_params: Dict[str, Any]` — 模板值
+- `_abort_signal: AbortSignal` — 取消信号
+- `_too_long_to_file: bool` — 将过长的工具结果截断并写入文件
+
+→ [API 参考：装饰器](/zh/api/decorators)

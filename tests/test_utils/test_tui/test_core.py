@@ -553,7 +553,7 @@ async def test_consume_react_stream_requires_event_mode() -> None:
         if False:
             yield None
 
-    with pytest.raises(ValueError, match="enable_event=True"):
+    with pytest.raises(ValueError, match="ReactOutput event stream"):
         await consume_react_stream(_stream(), adapter=adapter)
 
 

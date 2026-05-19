@@ -476,10 +476,12 @@ class OpenAIResponsesCompatible(LLM_Interface):
     ) -> Dict[str, Dict[str, "OpenAIResponsesCompatible"]]:
         if not os.path.exists(json_path):
             push_critical(
-                f"JSON 文件 {json_path} 不存在。请检查您的配置。",
+                f"JSON file {json_path} does not exist. Please check your configuration.",
                 location=get_location(),
             )
-            raise FileNotFoundError(f"JSON 文件 {json_path} 不存在。")
+            raise FileNotFoundError(
+                f"JSON file {json_path} does not exist."
+            )
 
         with open(json_path, "r", encoding="utf-8") as f:
             payload = json.load(f)
@@ -488,7 +490,9 @@ class OpenAIResponsesCompatible(LLM_Interface):
         for provider_id, models in payload.items():
             all_providers_dict[provider_id] = {}
             if not isinstance(models, list):
-                raise TypeError(f"提供商 {provider_id} 下的模型格式无效。应为列表。")
+                raise TypeError(
+                    f"Invalid model format under provider {provider_id}. Expected a list."
+                )
             for model_info in models:
                 model_name = model_info["model_name"]
                 key_pool = APIKeyPool(
@@ -638,7 +642,7 @@ class OpenAIResponsesCompatible(LLM_Interface):
                     tokens_needed=1, timeout=30.0
                 )
                 if not token_acquired:
-                    raise Exception("Rate limit: 令牌桶获取令牌超时")
+                    raise Exception("Rate limit: token bucket acquire timed out")
 
                 self.key_pool.increment_task_count(key)
                 data = json.dumps(list(messages), ensure_ascii=False, indent=4)

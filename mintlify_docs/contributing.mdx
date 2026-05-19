@@ -1,62 +1,11 @@
 ---
-title: 贡献指南
+title: Contributing
+description: How to contribute to SimpleLLMFunc
 ---
 
-感谢你对 SimpleLLMFunc 的兴趣。无论你是修复 bug、补充文档、完善示例，还是实现新功能，我们都欢迎你的贡献。
+# Contributing
 
-## 贡献方式
-
-<Tabs>
-  <Tab title="提交 Issue">
-    如果你发现问题或有新功能建议，请先在 [GitHub Issues](https://github.com/NiJingzhe/SimpleLLMFunc/issues) 搜索是否已有相同内容。
-
-    提交 Issue 时建议包含：
-
-    1. 清晰的标题
-    2. 详细的问题描述或需求背景
-    3. 复现步骤和环境信息
-    4. 如果可能，附上代码片段、日志或截图
-  </Tab>
-  <Tab title="提交 Pull Request">
-    标准流程如下：
-
-    1. Fork 项目仓库
-    2. 创建功能分支：`git checkout -b feature/amazing-feature`
-    3. 提交更改：`git commit -m 'Add some amazing feature'`
-    4. 推送到你的分支：`git push origin feature/amazing-feature`
-    5. 提交 Pull Request
-  </Tab>
-</Tabs>
-
-## 开发流程
-
-<Steps>
-  <Step title="准备开发环境">
-    确保本地已安装 Python 3.12+ 和 Poetry，并完成依赖安装。
-  </Step>
-  <Step title="同步最新代码">
-    在开始工作前，先基于仓库最新代码创建分支，避免在过旧基础上开发。
-  </Step>
-  <Step title="实现功能并补充测试">
-    为功能或修复编写必要的测试和文档，避免只改代码不补说明。
-  </Step>
-  <Step title="自查并提交 PR">
-    确认测试通过、风格一致、文档已更新，再发起 Pull Request。
-  </Step>
-</Steps>
-
-<Callout type="info">
-如果你的改动会影响用户使用方式、配置方法或示例代码，请同时更新对应文档页面。
-</Callout>
-
-## 开发环境设置
-
-### 依赖项
-
-- Python 3.12 或更高版本
-- Poetry（推荐的依赖管理工具）
-
-### 安装开发依赖
+## Development Setup
 
 ```bash
 git clone https://github.com/NiJingzhe/SimpleLLMFunc.git
@@ -64,85 +13,76 @@ cd SimpleLLMFunc
 poetry install
 ```
 
-## 文档 i18n 工作流
-
-Mintlify 文档国际化通过脚本同步 locale 页面结构。
-
-<AccordionGroup>
-  <Accordion title="核心思路">
-    - 中文根目录页面仍然作为默认源文档
-    - 目标语言页面生成到 `mintlify_docs/<lang>/...`
-    - 可通过脚本批量同步 locale 页面和导航配置
-    - 对尚未覆盖的片段，可以继续迭代补充翻译内容或翻译记忆
-  </Accordion>
-  <Accordion title="审计当前 locale 覆盖情况">
-    ```bash
-    poetry run python scripts/translate_mintlify_docs.py \
-      --target-lang en
-    ```
-  </Accordion>
-  <Accordion title="同步英文页面 skeleton">
-    ```bash
-    poetry run python scripts/translate_mintlify_docs.py \
-      --target-lang en \
-      --source-lang zh_CN \
-      --sync-pages
-    ```
-  </Accordion>
-  <Accordion title="对缺失片段启用模型补齐">
-    ```bash
-    poetry run python scripts/translate_mintlify_docs.py \
-      --target-lang en \
-      --source-lang zh_CN \
-      --sync-pages \
-      --translate
-    ```
-  </Accordion>
-  <Accordion title="写入 Mintlify language switcher 配置">
-    ```bash
-    poetry run python scripts/translate_mintlify_docs.py \
-      --target-lang en \
-      --source-lang zh_CN \
-      --write-docs-json
-    ```
-  </Accordion>
-</AccordionGroup>
-
-也可以直接使用批处理脚本：
+## Running Tests
 
 ```bash
-bash scripts/batch_translate_mintlify.sh
+# All tests
+poetry run pytest
+
+# Specific test file
+poetry run pytest tests/test_base/test_react_core_scheduler.py
+
+# With verbose output
+poetry run pytest -v
 ```
 
-<Callout type="info">
-建议先跑一次不带 `--translate` 的 audit 或 `--sync-pages`，先确认页面结构、导航和 locale 输出都符合预期，再继续补全文案。
-</Callout>
+## Project Structure
 
-## 代码规范
+```
+SimpleLLMFunc/
+├── SimpleLLMFunc/          # Source code
+│   ├── llm_decorator/     # L1: Decorator layer
+│   ├── base/              # L2+L3: Compile boundary + ReAct runtime
+│   ├── runtime/           # Runtime primitives + selfref
+│   ├── builtin/           # PyRepl, FileToolset, SelfReference
+│   ├── hooks/             # Events, stream, abort
+│   ├── interface/         # LLM adapters
+│   ├── tool/              # @tool decorator
+│   └── utils/             # TUI, stdio
+├── tests/                 # Mirror of source structure
+├── examples/              # Runnable examples
+├── mintlify_docs/         # This documentation
+└── spec/                  # Architecture specs
+```
 
-<AccordionGroup>
-  <Accordion title="代码风格">
-    我们以 [PEP 8](https://www.python.org/dev/peps/pep-0008/) 为基础，并优先保持与仓库现有代码风格一致。
-  </Accordion>
-  <Accordion title="类型注解">
-    建议为新增或修改的公共接口补充类型注解，以提高可读性和安全性。
-  </Accordion>
-  <Accordion title="文档要求">
-    - 所有公共 API 都应有清晰的文档字符串
-    - 文档注释建议遵循 [Google Python 文档风格](https://github.com/google/styleguide/blob/gh-pages/pyguide#38-comments-and-docstrings)
-    - 更新功能时，请同步更新相关文档和示例
-  </Accordion>
-</AccordionGroup>
+## Development Workflow
 
-## 行为准则
+1. Read relevant source and tests before making changes
+2. Write or update tests first (TDD)
+3. Make the smallest coherent change
+4. Run targeted tests, then broader tests
+5. Update docs if user-facing behavior changed
 
-请尊重所有项目参与者，保持友好的交流环境。任何形式的骚扰、歧视或冒犯行为都不可接受。
+## Key Rules
 
-## 获取帮助
+- All decorated functions must be `async def`
+- Runtime side effects must flow through the internal patch boundary (never mutate live messages directly)
+- Runtime primitive docstrings must include `Best Practices`
+- Tests mirror source structure: `SimpleLLMFunc/base/react_loop.py` → `tests/test_base/test_react_loop.py`
 
-如果你在贡献过程中遇到问题，可以：
+## Code Style
 
-- 在 [GitHub Issues](https://github.com/NiJingzhe/SimpleLLMFunc/issues) 中提问
-- 联系项目维护者
+- Python 3.12+
+- PEP 8 formatting
+- Type annotations on public APIs
+- snake_case functions, PascalCase classes, UPPER_SNAKE_CASE constants
 
-再次感谢你对 SimpleLLMFunc 的贡献。
+## Documentation
+
+- English docs in `mintlify_docs/` (root)
+- Chinese translation follows (separate PR)
+- Keep examples runnable and imports current
+
+## Pull Requests
+
+1. Fork the repository
+2. Create a feature branch from `dev`
+3. Make your changes with tests
+4. Open a PR against `dev`
+5. Describe what changed and why
+
+## Issues
+
+- Use GitHub Issues for bugs and feature requests
+- Include: what you expected, what happened, minimal reproduction
+- Label appropriately: `bug`, `feature`, `docs`, `refactor`

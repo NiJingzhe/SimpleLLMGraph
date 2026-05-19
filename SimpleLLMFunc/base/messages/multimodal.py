@@ -152,7 +152,7 @@ def create_image_url_content(value: Any, param_name: str) -> Dict[str, Any]:
         detail = "auto"
 
     push_debug(
-        f"添加图片URL: {param_name} = {url} (detail: {detail})",
+        f"Added image URL: {param_name} = {url} (detail: {detail})",
         location=get_location(),
     )
 
@@ -181,7 +181,7 @@ def create_image_path_content(value: Any, param_name: str) -> Dict[str, Any]:
     data_url = f"data:{mime_type};base64,{base64_img}"
 
     push_debug(
-        f"添加本地图片: {param_name} = {img_path.path} (detail: {detail})",
+        f"Added local image: {param_name} = {img_path.path} (detail: {detail})",
         location=get_location(),
     )
 
@@ -190,4 +190,3 @@ def create_image_path_content(value: Any, param_name: str) -> Dict[str, Any]:
         image_url_data["detail"] = detail
 
     return {"type": "image_url", "image_url": image_url_data}
-

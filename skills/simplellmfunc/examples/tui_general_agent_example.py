@@ -114,7 +114,6 @@ file_tools = FileToolset(SANDBOX_DIR).toolset
     llm_interface=llm,
     toolkit=[*repl.toolset, *file_tools],
     stream=True,
-    enable_event=True,
     self_reference_key=MEMORY_KEY,
     temperature=1.0,
 )

@@ -28,9 +28,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, NotRequired, TypeAlias, TypedDict
 
-# 导入 OpenAI SDK 的消息类型
-from openai.types.chat.chat_completion_message import ChatCompletionMessage
-
 # Reasoning detail 的类型定义
 class ReasoningDetail(TypedDict):
     """推理细节的类型定义（用于 Google Gemini 等模型）"""
@@ -60,9 +57,26 @@ class ExtendedMessageParam(TypedDict, total=False):
     # 扩展字段（如 Google Gemini 的 reasoning_details）
     reasoning_details: NotRequired[List[ReasoningDetail]]
 
-# 使用扩展类型作为主要消息类型
-MessageParam: TypeAlias = ChatCompletionMessage | ExtendedMessageParam
+
+class ToolMessageParam(TypedDict, total=False):
+    role: Literal["tool"]
+    content: str
+    tool_call_id: str
+
+
+class FunctionMessageParam(TypedDict, total=False):
+    role: Literal["function"]
+    content: str
+    name: str
+
+# 使用 dict-like 消息类型作为主要消息类型。
+# SDK 的 ChatCompletionMessage 只应该出现在边界输入/输出，进入框架内部后
+# 应通过 message_to_dict() 归一化为这些字典结构。
+MessageParam: TypeAlias = ExtendedMessageParam | ToolMessageParam | FunctionMessageParam
 
 # 消息列表类型
 MessageList: TypeAlias = List[MessageParam]
 
+# Internal normalized dict-like message shape used after boundary coercion.
+NormalizedMessageParam: TypeAlias = ExtendedMessageParam | ToolMessageParam | FunctionMessageParam
+NormalizedMessageList: TypeAlias = List[NormalizedMessageParam]

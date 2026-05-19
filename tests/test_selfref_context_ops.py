@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from SimpleLLMFunc.base.types import DataFromSelfRef
 from SimpleLLMFunc.runtime.selfref.context_ops import (
+    build_context_messages_from_selfref_data,
     build_context_messages_from_state_data,
+    parse_data_from_selfref,
     parse_context_messages,
     parse_context_compaction_summary,
     render_context_compaction_summary,
@@ -135,4 +138,72 @@ def test_parse_and_build_context_messages_round_trip() -> None:
     parsed = parse_context_messages(original_messages)
     rebuilt = build_context_messages_from_state_data(parsed)
 
+    assert rebuilt == original_messages
+
+
+def test_parsed_context_messages_map_cleanly_to_data_from_selfref() -> None:
+    messages = [
+        {
+            "role": "system",
+            "content": "Base rules\n\n<experience>\n- [exp_1] Preference A\n</experience>",
+        },
+        {
+            "role": "assistant",
+            "content": render_context_compaction_summary(
+                {
+                    "goal": "Goal A",
+                    "instruction": "Instruction A",
+                    "discoveries": ["Discovery A"],
+                    "completed": ["Completed A"],
+                    "current_status": "Status A",
+                    "likely_next_work": ["Next A"],
+                    "relevant_files_directories": ["src/a.py"],
+                }
+            ),
+        },
+        {"role": "user", "content": "follow-up"},
+    ]
+
+    parsed = parse_context_messages(messages)
+    data = DataFromSelfRef(
+        base_system_prompt=parsed["base_system_prompt"],
+        experiences=parsed["experiences"],
+        summary=parsed["summary"],
+        summary_message=parsed["summary_message"],
+        working_messages=parsed["working_messages"],
+    )
+
+    assert data.base_system_prompt == "Base rules"
+    assert data.experiences == [{"id": "exp_1", "text": "Preference A"}]
+    assert data.summary is not None
+    assert data.working_messages == [{"role": "user", "content": "follow-up"}]
+
+
+def test_parse_and_build_data_from_selfref_round_trip() -> None:
+    original_messages = [
+        {
+            "role": "system",
+            "content": "Base rules\n\n<experience>\n- [exp_1] Preference A\n</experience>",
+        },
+        {
+            "role": "assistant",
+            "content": render_context_compaction_summary(
+                {
+                    "goal": "Goal A",
+                    "instruction": "Instruction A",
+                    "discoveries": ["Discovery A"],
+                    "completed": ["Completed A"],
+                    "current_status": "Status A",
+                    "likely_next_work": ["Next A"],
+                    "relevant_files_directories": ["src/a.py"],
+                }
+            ),
+        },
+        {"role": "assistant", "content": "fresh output"},
+    ]
+
+    data = parse_data_from_selfref(original_messages)
+    rebuilt = build_context_messages_from_selfref_data(data)
+
+    assert isinstance(data, DataFromSelfRef)
     assert rebuilt == original_messages

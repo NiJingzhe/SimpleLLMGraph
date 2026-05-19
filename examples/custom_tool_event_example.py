@@ -78,7 +78,6 @@ async def batch_process(
 @llm_function(
     llm_interface=llm,
     toolkit=[batch_process],
-    enable_event=True,
 )
 async def process_task(task: str) -> str:
     """
@@ -101,7 +100,7 @@ async def main():
     print("-" * 70)
 
     # 调用 LLM 函数
-    async for output in process_task(
+    async for output in process_task.stream(
         task="请处理以下项目：item1, item2, item3, item4, item5"
     ):
         # 处理响应结果

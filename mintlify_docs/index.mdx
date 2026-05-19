@@ -1,62 +1,76 @@
 ---
-title: SimpleLLMFunc documentation
+title: SimpleLLMFunc
+description: Build typed LLM agents with Python functions
 ---
 
-SimpleLLMFunc 是一个轻量级、可配置的 LLM 应用开发框架。
+# SimpleLLMFunc
 
-## 入门
+**LLM calls as typed Python functions. Context compiled from prompts, history, and runtime patches. Prompts as code.**
 
-<CardGroup>
-  <Card title="项目介绍" href="/introduction" />
-  <Card title="快速开始" href="/quickstart" />
-  <Card title="使用指南" href="/guide" />
+SimpleLLMFunc is a framework for building LLM-powered agents where every LLM interaction is a normal Python function call — typed, testable, and composable. No chains, no graphs, no YAML. Just functions.
+
+---
+
+## Choose Your Path
+
+<CardGroup cols={3}>
+  <Card title="Start Building" icon="rocket" href="/quickstart">
+    Get a working agent in 5 minutes. Install, configure, run.
+  </Card>
+  <Card title="Understand the Model" icon="brain" href="/philosophy/llm-is-function">
+    Learn why SimpleLLMFunc works the way it does. Three short essays on design philosophy.
+  </Card>
+  <Card title="API Reference" icon="book" href="/api/decorators">
+    Jump straight to signatures, types, and parameters.
+  </Card>
 </CardGroup>
 
+---
 
-## 基础设施
+## What Makes This Different
 
-<CardGroup>
-  <Card title="配置与环境" href="/detailed_guide/config" />
-  <Card title="LLM 接口层" href="/detailed_guide/llm_interface" />
-</CardGroup>
+### LLM is Function
 
+```python
+@llm_function(llm_interface=llm)
+async def analyze(text: str) -> SentimentReport:
+    """Classify sentiment. Return structured report."""
+    pass
 
-## 开发体验
+result = await analyze("Great product, terrible shipping.")
+print(result.sentiment)  # "mixed"
+```
 
-<CardGroup>
-  <Card title="llm_function 装饰器" href="/detailed_guide/llm_function" />
-  <Card title="llm_chat 装饰器" href="/detailed_guide/llm_chat" />
-</CardGroup>
+No SDK boilerplate. No message list construction. The decorator handles context compilation, type parsing, and structured output extraction. You write a function signature and a docstring.
 
+### Context-Centric
 
-## Agent 主体逻辑
+Every LLM call is compiled into a provider-facing message list. The compiler combines invocation configuration (docstrings, template values, tool guidance), the base transcript/history, and internal runtime patches. Those patches are represented as **mutations** so LLM calls, tools, SelfRef, and abort handling do not directly edit the live transcript.
 
-<CardGroup>
-  <Card title="事件流系统" href="/detailed_guide/event_stream" />
-  <Card title="中断与取消" href="/detailed_guide/abort" />
-</CardGroup>
+### Prompt as Code
 
+Your docstring IS the system prompt. It lives next to the code that uses it, versions with git, and benefits from IDE tooling. No separate prompt files, no template engines, no drift between what you wrote and what the model sees.
 
-## 工具与运行时
+---
 
-<CardGroup>
-  <Card title="Primitive 原语" href="/detailed_guide/primitive" />
-  <Card title="工具系统" href="/detailed_guide/tool" />
-  <Card title="PyRepl运行时" href="/pyrepl" />
-</CardGroup>
+## The Stack at a Glance
 
+```
+┌─────────────────────────────────────────┐
+│         Your Agent Code                  │
+│   @llm_function / @llm_chat / @tool     │
+├─────────────────────────────────────────┤
+│         Compile Boundary                 │
+│   Config + Transcript + Patches → LLM   │
+├─────────────────────────────────────────┤
+│         ReAct Runtime                    │
+│   Event stream, tool scheduling, abort  │
+├─────────────────────────────────────────┤
+│         Interface Layer                  │
+│   OpenAICompatible / ResponsesCompatible│
+└─────────────────────────────────────────┘
+```
 
-## UI 与交互
-
-<CardGroup>
-  <Card title="终端TUI" href="/tui" />
-</CardGroup>
-
-
-## 集成与示例
-
-<CardGroup>
-  <Card title="Langfuse集成" href="/langfuse_integration" />
-  <Card title="示例代码" href="/examples" />
-  <Card title="贡献指南" href="/contributing" />
-</CardGroup>
+<Card title="Ready to build?" icon="code" href="/quickstart">
+  Start with a 5-minute quickstart that gets you from zero to a working LLM function call.
+</Card>
