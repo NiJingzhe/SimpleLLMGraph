@@ -27,7 +27,7 @@ selfref.bind_history("agent_main", initial_history)
 ### SelfRefSession（调用级插件）
 
 单次调用的生命周期适配器。每次 `@llm_chat` 调用时重新创建。实现 ReAct hook：
-- `collect_context_mutations()` ——在每次编译前提供来自 selfref 的 mutation
+- `collect_context_mutations()` ——在每次编译前提供来自 selfref 的内部对话记录补丁
 - `finalize()` ——轮次结束后将最终状态持久化到 SelfReference 后端
 
 Session 在无状态的 ReAct 循环和有状态的后端之间架起了桥梁。
@@ -42,7 +42,7 @@ Session 在无状态的 ReAct 循环和有状态的后端之间架起了桥梁�
         │                                                │
         │  每次编译前：                                    │
         │    → collect_context_mutations()               │
-        │    → 可能产出 Experience/Summary mutation        │
+        │    → 可能产出 Experience/Summary 补丁            │
         │                                                │
         │  轮次结束后：                                    │
         │    → finalize()                                │
@@ -89,9 +89,9 @@ class DataFromSelfRef:
 | 原语 | 功能说明 |
 |------|---------|
 | `runtime.selfref.context.inspect()` | 返回只读快照：活跃 key、经验、摘要、消息、是否有待处理的压缩 |
-| `runtime.selfref.context.remember(text)` | 存储持久经验 → 产出 `ExperienceRememberMutation` |
-| `runtime.selfref.context.forget(experience_id)` | 移除经验 → 产出 `ExperienceForgetMutation` |
-| `runtime.selfref.context.compact(goal, instruction, discoveries, completed, current_status, likely_next_work, relevant_files_directories, remember=[])` | 将上下文压缩加入队列 → 最终产出 `ContextSummaryMutation` |
+| `runtime.selfref.context.remember(text)` | 通过内部经验补丁存储持久经验 |
+| `runtime.selfref.context.forget(experience_id)` | 通过内部经验补丁移除经验 |
+| `runtime.selfref.context.compact(goal, instruction, discoveries, completed, current_status, likely_next_work, relevant_files_directories, remember=[])` | 将上下文压缩加入队列 → 稍后应用内部摘要补丁 |
 
 ### 分叉原语
 
@@ -114,7 +114,7 @@ System Prompt:
   </experiences>
 ```
 
-- `remember("...")` → 立即添加经验（通过 mutation）
+- `remember("...")` → 通过运行时补丁边界记录经验
 - `forget("exp_001")` → 移除经验
 - 经验在压缩中存活——它们存储在系统提示词中，而非工作对话记录中
 - 在编译阶段 2 中由 `render_system_prompt_with_experiences()` 渲染
@@ -139,7 +139,7 @@ payload = runtime.selfref.context.compact(
 
 处理过程：
 1. 压缩被**加入队列**（不会立即应用）
-2. 当前工具批次完成后，`ContextSummaryMutation` 被应用
+2. 当前工具批次完成后，运行时会应用摘要补丁
 3. 系统提示词被保留
 4. 工作对话记录被替换为摘要消息
 5. `remember` 中的条目成为持久经验

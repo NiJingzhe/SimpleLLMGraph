@@ -1,11 +1,11 @@
 ---
 title: 编译管道
-description: mutation 如何通过两阶段编译边界变成最终的 LLM 请求
+description: invocation 配置、对话记录和运行时补丁如何变成最终的 LLM 请求
 ---
 
 # 编译管道
 
-编译管道将原始上下文状态 + 待处理的 mutation 转换为发送给 LLM 提供商的最终消息。这是一个两阶段的过程，状态归约与请求渲染之间有着清晰的边界。
+编译管道将 invocation 配置、基础对话记录和待处理的运行时补丁转换为发送给 LLM 提供商的最终消息。这是一个两阶段的过程，对话记录补丁应用与请求渲染之间有着清晰的边界。
 
 ## 两个阶段
 
@@ -13,7 +13,7 @@ description: mutation 如何通过两阶段编译边界变成最终的 LLM 请�
 compile_invocation_turn(spec, transcript, pending_mutations, selfref_snapshot)
 │
 ├─► 阶段 1：reduce_turn_context(transcript, mutations, selfref_snapshot)
-│       • 将所有待处理的 mutation 应用到对话记录
+│       • 将所有待处理的运行时补丁应用到对话记录
 │       • 如检测到标记，刷新 selfref 快照
 │       • 克隆结果（无共享引用）
 │       → 返回：ReducedTurnContext
@@ -27,7 +27,7 @@ compile_invocation_turn(spec, transcript, pending_mutations, selfref_snapshot)
 
 ## 阶段 1：归约轮次上下文
 
-`reduce_turn_context` 接收当前对话记录和所有待处理的 mutation，输出一份干净的、已应用 mutation 的对话记录。
+`reduce_turn_context` 接收当前基础对话记录和所有待处理的运行时补丁，输出一份干净的、已应用补丁的对话记录。
 
 ```python
 def reduce_turn_context(
@@ -39,7 +39,7 @@ def reduce_turn_context(
 
 处理过程：
 
-1. **应用 mutation** — `apply_mutations(transcript, pending_mutations)` 按顺序处理每个 mutation：
+1. **应用运行时补丁** — `apply_mutations(transcript, pending_mutations)` 按顺序处理每个 mutation：
    - `AssistantMessageMutation` → 追加助手消息
    - `ToolResultMutation` → 追加工具结果
    - `ContextReplaceMutation` → 替换整个列表
@@ -62,7 +62,7 @@ class ReducedTurnContext:
 
 ## 阶段 2：转换为 LLM 请求
 
-`convert_to_llm_request` 接收归约后的上下文，生成发送给提供商的最终消息。
+`convert_to_llm_request` 接收归约后的对话记录和 invocation 的 prompt contract，生成发送给提供商的最终消息。
 
 ```python
 def convert_to_llm_request(
@@ -121,7 +121,7 @@ while has_more_work:
     pending = llm_result.mutations + tool_result.mutations
 ```
 
-每次迭代都经过完整的管道。没有捷径，没有"直接追加到列表"。这保证了即使经过 50 次工具调用，上下文状态依然一致且可审计。
+每次迭代都经过完整的管道。Runtime 副作用不会“直接追加到 live list”，而是产生补丁并在边界应用。这保证了即使经过 50 次工具调用，对话记录状态依然一致且可审计。
 
 ## 唯一入口点
 
@@ -149,15 +149,14 @@ def compile_invocation_turn(
 
 ## 实际意义
 
-对大多数用户来说，这些都是不可见的。你写一个函数，它就能运行。
+对大多数用户来说，这些都是不可见的。你写函数、传 history、挂载工具、消费事件即可。
 
-但当你需要：
-- **调试上下文问题** → 检查产生了哪些 mutation、以什么顺序
-- **注入自定义 mutation** → 从 hook 中生产类型化的 `ContextMutation` 对象
+但当你需要调试内部行为：
+- **调试对话记录问题** → 检查产生了哪些运行时补丁、以什么顺序
 - **理解系统提示词行为** → 了解阶段 2 中的优先级顺序
-- **构建自定义状态管理** → 直接使用 `reduce_turn_context`
+- **构建框架扩展** → 使用编译边界，而不是直接修改 live messages
 
-……管道会给你完整的可见性和控制权。
+重要区别：mutation 是内部对话记录补丁。它不是 docstring、模板参数、工具 schema 或初始 history 的来源。
 
 <Card title="下一节：SelfRef 自引用" icon="brain" href="/zh/context/selfref">
   持久上下文（经验、压缩、分叉）如何通过 SelfReference 系统工作。

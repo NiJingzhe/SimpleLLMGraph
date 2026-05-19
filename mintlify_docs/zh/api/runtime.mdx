@@ -117,10 +117,11 @@ from SimpleLLMFunc.runtime import ForkContext
 ```python
 @dataclass
 class ForkContext:
-    fork_id: str
-    parent_tool_call_id: str
-    task: str
-    instruction: str
+    parent_pack_name: str
+    backend_name: str
+    child_fork_id: str | None = None
+    source_memory_key: str | None = None
+    metadata: dict[str, Any] | None = None
 ```
 
 ---

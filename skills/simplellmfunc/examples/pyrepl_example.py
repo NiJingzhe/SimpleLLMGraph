@@ -177,8 +177,7 @@ async def demo_llm_integration():
     @llm_chat(
         llm_interface=llm,
         toolkit=tools,
-        enable_event=True,
-    )
+        )
     async def data_assistant(message: str, history=None):
         """
         你是一个 Python 数据分析助手。

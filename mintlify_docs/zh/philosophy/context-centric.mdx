@@ -1,99 +1,118 @@
 ---
 title: 以上下文为中心
-description: 为什么上下文是唯一真相源，以及所有变更都通过 Mutation 流转
+description: LLM 上下文如何由 invocation 配置、对话记录和运行时补丁编译而来
 ---
 
 # 以上下文为中心
 
-SimpleLLMFunc 最重要的架构决策：**上下文是结构化状态机，而不是聊天日志**。
+SimpleLLMFunc 不把 provider messages 当作一个任由各组件直接编辑的列表。每次 LLM 调用都会从三类输入编译出发送给提供商的消息列表：
+
+1. **Invocation 配置** —— docstring 提示词、模板参数、工具指导、输出契约、SelfRef 快照。
+2. **基础对话记录** —— 本次调用的 history / 当前消息。
+3. **运行时对话记录补丁** —— LLM 调用、工具执行、SelfRef 原语、中断处理和压缩产生的内部类型化编辑。
+
+更准确地说：
+
+```text
+provider messages = render(invocation config, patch(base transcript, runtime patches))
+```
 
 ## 问题
 
-在大多数 LLM Agent 系统中，"上下文"意味着"我们发送给模型的消息列表"。这个列表从各处被修改：
-- 工具直接追加结果
-- 编排循环推入助手消息
-- 记忆系统在任意位置注入上下文
-- 摘要器就地覆盖历史
+在很多 Agent 系统中，"上下文"就是一个被到处修改的消息列表：
 
-结果：不可预测的上下文。你无法推理模型将看到什么，因为多个组件无协调地写入同一个可变列表。
+- 工具直接追加结果；
+- 编排循环直接塞入助手消息；
+- 记忆系统在任意位置注入内容；
+- 摘要器就地覆盖历史；
+- 中断/取消处理留下半合法的消息结构。
 
-## Mutation 模型
+结果是上下文不可预测：很难回答“下一次模型到底会看到什么”。
 
-在 SimpleLLMFunc 中，没有任何东西直接写入上下文。相反：
+## 运行时补丁模型
 
-1. **生产者**（LLM 调用、工具执行、SelfRef 钩子）发出 **Mutation** — 描述应该改变什么的类型化对象
-2. **Mutation 累积**在 ReAct 迭代期间
-3. 在**编译边界**，所有待处理的 mutation 被原子性地应用以产生下一个上下文状态
-4. 只有**编译结果**对 LLM 可见
+SimpleLLMFunc 使用 `ContextMutation` 作为**内部对话记录补丁协议**。
 
+Mutation 不是完整上下文，也不是主要用户 API。它只是 runtime 副作用对基础对话记录产生的类型化增量编辑，并且只在编译边界统一应用。
+
+```text
+runtime 副作用 → ContextMutation → [累积] → 应用到 transcript → 渲染 LLM 请求
 ```
-生产者 → Mutation → [累积] → 编译 → LLM 看到结果
-```
 
-这与数据库事务或 React 的状态批处理相同的原则：收集所有变更，一起应用，产生一致的快照。
+例子：
 
-## 10 种 Mutation 类型
+| 运行时事实 | 内部补丁 |
+| --- | --- |
+| LLM 产生最终助手消息 | `AssistantMessageMutation` |
+| 工具返回文本 | `ToolResultMutation` |
+| 工具返回多模态内容 | `MultimodalToolResultMutation` |
+| SelfRef 压缩工作上下文 | `ContextSummaryMutation` |
+| 用户中断 LLM 流式输出 | `AssistantTruncatedMutation` |
+| 工具执行被取消 | `ToolCancelledMutation` |
 
-每种可能的上下文变更都映射到这些类型之一：
+核心规则是：
 
-| Mutation | 作用 |
-|----------|------|
-| `AssistantMessage` | 追加模型的响应（文本或工具调用） |
-| `ToolResult` | 将工具的输出附加到对应的调用 |
-| `MultimodalToolResult` | 工具返回了图片/混合内容 |
-| `UserMessage` | 追加新的用户消息 |
-| `ContextReplace` | 替换整个消息列表（硬重置） |
-| `ContextSummary` | 用摘要 + 记忆的经验替换 |
-| `ExperienceRemember` | 在系统上下文中存储持久经验 |
-| `ExperienceForget` | 移除已存储的经验 |
-| `AssistantTruncated` | 记录被中断/截断的模型响应 |
-| `ToolCancelled` | 记录被取消的工具调用 |
+> Runtime 副作用不能直接修改 live transcript。它们只能产生类型化补丁，并由编译边界按顺序应用。
 
-没有其他方式可以改变上下文。如果你理解这 10 种类型，你就理解了系统中每一种可能的上下文转换。
+## Mutation 不是什么
 
-## 为什么这很重要
+Mutation 的范围是有意收窄的。
 
-### 可预测性
+它不是：
 
-在任何时刻，你都可以回答："模型将看到什么？"——通过查看当前上下文状态 + 待处理的 mutation。没有隐藏的副作用，没有并发工具之间的竞态条件。
+- docstring / 系统提示词的来源；
+- 模板参数的来源；
+- 工具 schema 或工具最佳实践提示的来源；
+- `@llm_chat` 初始 `history` 的来源；
+- UI 消费的 public event stream；
+- 用户自定义 Agent 的主要入口。
 
-### 可审计性
+这些分别属于 invocation 配置、基础对话记录、工具、SelfRef 原语或事件消费者。
 
-每个变更都有类型化的来源。你可以记录 mutation 来查看确切发生了什么：
-```
-[iter 1] AssistantMessage: "让我搜索一下..."
-[iter 1] ToolResult(id=call_abc): "找到: SimpleLLMFunc 是..."
-[iter 2] AssistantMessage: "根据搜索结果..."
-```
+## 为什么仍然重要
 
 ### 安全并发
 
-当多个工具并行执行时，每个都产生自己的 mutation。它们在编译边界被收集并按顺序应用——无需锁，共享消息列表上没有竞态条件。
+多个工具可以并行完成。工具不直接写共享消息列表，而是产生结果补丁；运行时在下一个编译边界统一应用。
 
 ### 可控压缩
 
-上下文压缩（摘要化）只是另一个 mutation（`ContextSummary`）。它经过相同的管道，遵守相同的排序规则，产生确定性的结果。
+上下文压缩是一个对话记录补丁。它可以用摘要替换过期工作消息，同时保留系统提示词和持久经验。
+
+### 合法的中断 / 取消状态
+
+中断处理必须留下结构合法的对话记录。`AssistantTruncatedMutation` 和 `ToolCancelledMutation` 把这些修复逻辑集中到一个地方。
+
+### 可测试的内部边界
+
+补丁应用可以和提示词渲染、provider transport 分开测试。
 
 ## 编译边界
 
-编译边界是 mutation 变成消息的地方：
+编译边界有两个职责：
 
-```
+1. 用待处理 runtime mutation 修补基础对话记录。
+2. 根据修补后的对话记录 + invocation 配置渲染 provider 请求。
+
+```text
 ┌─────────────────────────────────────────────┐
-│  ReAct 迭代 N                                │
-│                                              │
-│  LLM 调用 → AssistantMessage mutation        │
-│  工具执行 → ToolResult mutation              │
-│  SelfRef 钩子 → Experience mutation          │
-│                                              │
+│  输入                                        │
+│                                             │
+│  Invocation 配置                             │
+│    - docstring / prompt contract             │
+│    - template params                         │
+│    - tool guidance                           │
+│    - SelfRef snapshot                        │
+│                                             │
+│  基础对话记录 / history                       │
+│  运行时补丁 (ContextMutation[])               │
 ├──────────── 编译边界 ────────────────────────┤
-│                                              │
-│  apply_mutations(state, pending_mutations)   │
-│  → 产生新的 ContextState                     │
-│                                              │
-│  convert_to_llm_request(context)             │
-│  → 产生发送给提供商的 messages[]              │
-│                                              │
+│                                             │
+│  apply_mutations(transcript, patches)        │
+│  → patched transcript                        │
+│                                             │
+│  convert_to_llm_request(...)                 │
+│  → provider-facing messages[]                │
 └─────────────────────────────────────────────┘
 ```
 
@@ -101,16 +120,15 @@ SimpleLLMFunc 最重要的架构决策：**上下文是结构化状态机，而�
 
 ## 实际影响
 
-对于大多数用户，这是不可见的——你写一个函数，它就工作了。Mutation 模型是让它可靠工作的实现细节。
+对于大多数用户，mutation 是不可见的。你写函数、传 history、挂载工具、消费事件，并按需使用 SelfRef 原语。
 
-但当你需要：
-- 理解为什么 Agent "忘记了"某些东西 → 检查哪个 mutation 替换了上下文
-- 构建自定义记忆系统 → 发出正确的 mutation
-- 调试意外行为 → 追踪 mutation 日志
-- 实现上下文压缩 → 通过 SelfRef 使用 `ContextSummary` mutation
+如果你在调试框架内部，mutation 能解释 runtime 副作用如何变成对话记录编辑。如果你在写应用代码，主要入口仍然是：
 
-…mutation 模型给你一个完整的、类型化的词汇表，覆盖每一种可能的上下文变更。
+- `@llm_function` / `@llm_chat` 的签名和 docstring；
+- `history` / `chat_history`；
+- 工具和事件流；
+- `remember(...)`、`compact(...)` 等 SelfRef 原语。
 
-<Card title="深入：所有 10 种 Mutation" icon="list" href="/zh/context/mutations">
-  查看每种 mutation 类型，它何时触发，以及它产生什么。
+<Card title="深入：运行时补丁" icon="list" href="/zh/context/mutations">
+  查看内部 mutation 类型以及 runtime 何时产生这些对话记录补丁。
 </Card>

@@ -38,9 +38,18 @@ class EventYield:
 ```python
 @dataclass
 class EventOrigin:
-    agent_id: str                         # "main" or fork ID
-    fork_id: Optional[str] = None
-    parent_tool_call_id: Optional[str] = None
+    session_id: str
+    agent_call_id: str
+    event_seq: int
+    parent_agent_call_id: str | None = None
+    fork_id: str | None = None
+    fork_depth: int = 0
+    fork_seq: int | None = None
+    selfref_instance_id: str | None = None
+    source_memory_key: str | None = None
+    memory_key: str | None = None
+    tool_name: str | None = None
+    tool_call_id: str | None = None
 ```
 
 ---
@@ -71,7 +80,7 @@ async for evt in events_only(agent_stream):
 
 # Only specific event types
 async for evt in filter_events(agent_stream, LLMChunkArriveEvent):
-    print(evt.event.chunk)
+    print(evt.event.accumulated_content)
 ```
 
 ---
@@ -138,7 +147,9 @@ class LLMCallStartEvent:
 ```python
 @dataclass
 class LLMChunkArriveEvent:
-    chunk: str                       # Text delta
+    chunk: LLMStreamChunk             # Provider chunk object
+    accumulated_content: str          # Content accumulated so far
+    chunk_index: int
     event_type: ReActEventType = ReActEventType.LLM_CHUNK_ARRIVE
 ```
 
@@ -149,8 +160,12 @@ class LLMChunkArriveEvent:
 ```python
 @dataclass
 class LLMCallEndEvent:
-    usage: Optional[Dict[str, int]]  # {prompt_tokens, completion_tokens, total_tokens}
-    response_message: Dict[str, Any] # Full assistant message
+    response: Any
+    messages: NormalizedMessageList
+    tool_calls: list[Any]
+    execution_time: float
+    content: str = ""
+    usage: Optional[Dict[str, int]] = None
     event_type: ReActEventType = ReActEventType.LLM_CALL_END
 ```
 
@@ -192,8 +207,10 @@ class ToolCallStartEvent:
 ```python
 @dataclass
 class ToolCallArgumentsDeltaEvent:
+    tool_name: str
     tool_call_id: str
-    delta: str                        # Streaming argument fragment
+    argname: str
+    argcontent_delta: str             # Streaming argument fragment
     event_type: ReActEventType = ReActEventType.TOOL_CALL_ARGUMENTS_DELTA
 ```
 
@@ -204,8 +221,10 @@ class ToolCallArgumentsDeltaEvent:
 class ToolCallEndEvent:
     tool_name: str
     tool_call_id: str
+    arguments: Dict[str, Any]
     result: Any
-    duration_ms: float
+    execution_time: float
+    success: bool
     event_type: ReActEventType = ReActEventType.TOOL_CALL_END
 ```
 

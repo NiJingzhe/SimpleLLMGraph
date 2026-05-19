@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from SimpleLLMFunc import llm_function
+from SimpleLLMFunc import LLMFunction, llm_function
 from SimpleLLMFunc.hooks.stream import ResponseYield
 from SimpleLLMFunc.observability.langfuse_client import (
     langfuse_client as shared_langfuse_client,
@@ -194,6 +194,9 @@ async def test_llm_function_passes_none_max_tool_calls_to_react_loop() -> None:
 
     assert captured["max_tool_calls"] is None
     assert result == "parsed-result"
+    assert isinstance(summarize, LLMFunction)
+    assert inspect.iscoroutinefunction(summarize)
+    assert inspect.signature(summarize) == inspect.signature(summarize.__wrapped__)
     mock_parse.assert_called_once_with(raw_response, str)
 
 

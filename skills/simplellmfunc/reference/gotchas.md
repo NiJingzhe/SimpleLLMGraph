@@ -4,6 +4,8 @@
 - `@tool` enforces async implementation directly.
 - Direct `OpenAICompatible` and `OpenAIResponsesCompatible` construction currently require `APIKeyPool`, `model_name`, and `base_url`; do not rely on a simplified `api_key=` shortcut.
 - `APIKeyPool` is keyed by `provider_id` and reused within a process, so changing keys while reusing the same `provider_id` may silently keep the old pool.
+- `@llm_function` returns an `LLMFunction` callable instance, not a plain wrapper function; `await fn(...)`, `fn.stream(...)`, and function-like metadata are preserved.
+- `@llm_chat` returns an `LLMChat` callable instance that SelfRef can bind as a stable agent instance; calling it yields a `ReactOutput` async stream.
 - `llm_function` does not send the raw docstring directly; it wraps it inside a system template together with parameter and return-type descriptions.
 - `llm_chat` only recognizes history parameters named `history` or `chat_history`.
 - In `llm_chat`, the latest history `system` message overrides the docstring as the base system prompt.
@@ -11,8 +13,8 @@
 - `OpenAIResponsesCompatible` still uses the same decorator-facing prompt model. The adapter maps the selected system prompt to Responses `instructions` and forwards `reasoning={...}` when provided.
 - Complex structured outputs are XML-backed internally. Let the return type drive parsing instead of hand-rolling JSON instructions.
 - `max_tool_calls=None` is intentionally unbounded. If you want a cap, set one yourself.
-- `llm_chat(enable_event=True)` does not yield `(chunk, history)` pairs. It yields `ReactOutput` items.
-- `llm_function(enable_event=True)` yields parsed final values in `ResponseYield.response`.
+- `llm_chat` does not yield `(chunk, history)` pairs. It yields `ReactOutput` items; use `is_response_yield` / `is_event_yield` to route them.
+- `llm_function.stream(...)` yields `ReactOutput`; parsed final values appear in `ResponseYield.response`.
 - `FileToolset` rejects hidden files, out-of-workspace paths, stale writes, and overly broad grep patterns.
 - `PyRepl.reset()` does not wipe self-reference memory.
 - `runtime.selfref.context.compact(...)` does not only apply at the very end of a turn. It queues a compaction that the framework tries to commit after the current tool batch so the next same-turn model step sees compacted context; finalize is the fallback commit point.

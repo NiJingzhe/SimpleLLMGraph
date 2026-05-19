@@ -37,7 +37,7 @@ signal.abort("user cancelled")
 
 1. The streaming connection is terminated
 2. Whatever content was received so far is preserved
-3. An `AssistantTruncatedMutation` is emitted with:
+3. The runtime produces an internal truncation patch with:
    - `partial_content` — what was received before abort
    - `abort_reason` — the reason you provided
 4. The ReAct loop terminates via the finalize path
@@ -45,7 +45,7 @@ signal.abort("user cancelled")
 ### During Tool Execution
 
 1. Running tools are cancelled (asyncio task cancellation)
-2. For each cancelled tool, a `ToolCancelledMutation` is emitted with:
+2. For each cancelled tool, the runtime produces an internal cancellation patch with:
    - `tool_call_id` — which call was cancelled
    - `tool_name` — the tool that was running
    - `abort_reason` — your reason
@@ -53,7 +53,7 @@ signal.abort("user cancelled")
 
 ### The Guarantee
 
-Abort always produces a valid final state. The transcript is never left with dangling tool calls or incomplete messages. The mutations ensure structural consistency.
+Abort always produces a valid final state. The transcript is never left with dangling tool calls or incomplete messages. Internal transcript patches ensure structural consistency.
 
 ## Abort in @llm_function
 
@@ -67,7 +67,7 @@ async def research(question: str) -> Report:
 
 signal = AbortSignal()
 
-async for output in research("...", _abort_signal=signal):
+async for output in research.stream("...", _abort_signal=signal):
     ...
 ```
 

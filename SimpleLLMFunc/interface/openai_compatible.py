@@ -198,6 +198,7 @@ class OpenAICompatible(LLM_Interface):
                     rate_limit_refill_rate = model_info.get(
                         "rate_limit_refill_rate", 1.0
                     )
+                    api_params = model_info.get("api_params", None)
 
                     # 创建APIKeyPool实例
                     key_pool = APIKeyPool(api_keys, f"{provider_id}-{model_name}")
@@ -212,6 +213,7 @@ class OpenAICompatible(LLM_Interface):
                         retry_delay=retry_delay,
                         rate_limit_capacity=rate_limit_capacity,
                         rate_limit_refill_rate=rate_limit_refill_rate,
+                        api_params=api_params,
                     )
 
                     all_providers_dict[provider_id][model_name] = instance
@@ -271,6 +273,7 @@ class OpenAICompatible(LLM_Interface):
         rate_limit_capacity: int = 10,
         rate_limit_refill_rate: float = 1.0,
         context_window: Optional[int] = DEFAULT_CONTEXT_WINDOW,
+        api_params: Optional[Dict[str, Any]] = None,
     ):
         """初始化OpenAI兼容的LLM接口
 
@@ -283,6 +286,7 @@ class OpenAICompatible(LLM_Interface):
             rate_limit_capacity: 令牌桶容量（最大令牌数）
             rate_limit_refill_rate: 令牌补充速率（令牌数/秒）
             context_window: 模型上下文窗口大小；未指定时默认使用 200000 占位
+            api_params: 额外透传到 API 调用的参数，如 {"reasoning_effort": "high"}
         """
         super().__init__(
             api_key_pool,
@@ -303,6 +307,8 @@ class OpenAICompatible(LLM_Interface):
             capacity=rate_limit_capacity,
             refill_rate=rate_limit_refill_rate,
         )
+
+        self._api_params: Dict[str, Any] = dict(api_params) if api_params else {}
 
         self.client = AsyncOpenAI(
             api_key=api_key_pool.get_least_loaded_key(), base_url=self.base_url
@@ -393,13 +399,16 @@ class OpenAICompatible(LLM_Interface):
                     f"OpenAICompatible::chat: {self.model_name} request with API key: {key}, and message: {data}",
                     location=get_location(),
                 )
+
+                # Merge instance-level api_params with call-level kwargs (call-level wins)
+                call_params = {**self._api_params, **kwargs}
                 response: ChatCompletion = await client.chat.completions.create(  # type: ignore
                     messages=messages,  # type: ignore
                     model=self.model_name,
                     stream=stream,
                     timeout=timeout,
                     *args,
-                    **kwargs,
+                    **call_params,
                 )
 
                 # 统计token
@@ -499,7 +508,8 @@ class OpenAICompatible(LLM_Interface):
                     location=get_location(),
                 )
 
-                request_kwargs = dict(kwargs)
+                # Merge instance-level api_params with call-level kwargs (call-level wins)
+                request_kwargs = {**self._api_params, **kwargs}
                 auto_stream_options_added = False
                 if "stream_options" not in request_kwargs:
                     request_kwargs["stream_options"] = {"include_usage": True}

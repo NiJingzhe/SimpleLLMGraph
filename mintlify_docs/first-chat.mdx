@@ -79,7 +79,7 @@ async def run_turn(message: str, history: list) -> list:
         if is_event_yield(output):
             event = output.event
             if isinstance(event, LLMChunkArriveEvent):
-                print(event.chunk, end="", flush=True)
+                print(event.accumulated_content, end="", flush=True)
             elif isinstance(event, ToolCallStartEvent):
                 print(f"\n[calling {event.tool_name}...]")
             elif isinstance(event, ToolCallEndEvent):
@@ -94,9 +94,6 @@ async def run_turn(message: str, history: list) -> list:
 For simpler use cases where you just want the final response:
 
 ```python
-from SimpleLLMFunc.hooks import responses_only
-
-
 @llm_chat(llm_interface=llm, stream=False)
 async def simple_chat(message: str, history: list | None = None):
     """A helpful assistant."""

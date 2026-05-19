@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional, Union, cast
+from typing import Any, Dict, List, Optional, Union, cast
 
 from SimpleLLMFunc.llm_decorator.invocation_spec import (
     InvocationSpec,
@@ -48,13 +48,15 @@ def build_function_invocation_spec(
         signature.docstring,
         template_params,
     )
-    initial_messages, system_prompt, return_type_description = build_function_transcript_seed(
-        processed_docstring=processed_docstring,
-        arguments=dict(signature.bound_args.arguments),
-        type_hints=signature.type_hints,
-        return_type=signature.return_type,
-        system_prompt_template=system_prompt_template,
-        user_prompt_template=user_prompt_template,
+    initial_messages, system_prompt, return_type_description = (
+        build_function_transcript_seed(
+            processed_docstring=processed_docstring,
+            arguments=dict(signature.bound_args.arguments),
+            type_hints=signature.type_hints,
+            return_type=signature.return_type,
+            system_prompt_template=system_prompt_template,
+            user_prompt_template=user_prompt_template,
+        )
     )
 
     prompt_contract = PromptContract(
@@ -81,7 +83,6 @@ def build_function_invocation_spec(
         template_params=template_params,
         llm_kwargs=dict(llm_kwargs),
         stream=False,
-        return_mode="typed",
         prompt_contract=prompt_contract,
         transcript_seed=TranscriptSeed(initial_messages=initial_messages),
     )
@@ -93,7 +94,6 @@ def build_chat_invocation_spec(
     template_params: Optional[Dict[str, Any]],
     llm_kwargs: Dict[str, Any],
     stream: bool,
-    return_mode: Literal["text", "raw"],
     runtime_toolkit: Optional[List[Union[Tool, Any]]],
     selfref_session: Optional[SelfRefSession] = None,
     raw_history_reference: Optional[List[Dict[str, Any]]] = None,
@@ -139,7 +139,6 @@ def build_chat_invocation_spec(
         template_params=template_params,
         llm_kwargs=dict(llm_kwargs),
         stream=stream,
-        return_mode=return_mode,
         prompt_contract=prompt_contract,
         transcript_seed=TranscriptSeed(
             initial_messages=cast(NormalizedMessageList, messages),

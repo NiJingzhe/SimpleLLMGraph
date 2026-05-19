@@ -98,7 +98,7 @@ asyncio.run(main())
 1. 用户消息 "如何安装 SimpleLLMFunc?" → 编译为 LLM 请求
 2. LLM 决定调用 search_docs(query="install SimpleLLMFunc")
 3. 框架执行工具，获取结果
-4. 结果通过 ToolResultMutation 添加到上下文
+4. 结果通过内部运行时补丁应用到对话记录
 5. 上下文重新编译，发回 LLM
 6. LLM 使用工具结果生成最终响应
 7. 响应以 ReactOutput 事件流式返回

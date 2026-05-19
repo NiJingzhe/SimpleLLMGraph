@@ -1,11 +1,11 @@
 ---
 title: Compile Pipeline
-description: How mutations become the final LLM request through the two-stage compile boundary
+description: How invocation config, transcript, and runtime patches become the final LLM request
 ---
 
 # Compile Pipeline
 
-The compile pipeline transforms raw context state + pending mutations into the final messages sent to the LLM provider. It's a two-stage process with a clean boundary between state reduction and request rendering.
+The compile pipeline transforms invocation configuration, a base transcript, and pending runtime patches into the final messages sent to the LLM provider. It's a two-stage process with a clean boundary between transcript patching and request rendering.
 
 ## The Two Stages
 
@@ -13,7 +13,7 @@ The compile pipeline transforms raw context state + pending mutations into the f
 compile_invocation_turn(spec, transcript, pending_mutations, selfref_snapshot)
 │
 ├─► Stage 1: reduce_turn_context(transcript, mutations, selfref_snapshot)
-│       • Apply all pending mutations to the transcript
+│       • Apply all pending runtime patches to the transcript
 │       • Refresh selfref snapshot if markers detected
 │       • Clone the result (no shared references)
 │       → Returns: ReducedTurnContext
@@ -27,7 +27,7 @@ compile_invocation_turn(spec, transcript, pending_mutations, selfref_snapshot)
 
 ## Stage 1: Reduce Turn Context
 
-`reduce_turn_context` takes the current transcript plus all pending mutations and produces a clean, mutation-applied transcript.
+`reduce_turn_context` takes the current base transcript plus all pending runtime patches and produces a clean, patch-applied transcript.
 
 ```python
 def reduce_turn_context(
@@ -39,7 +39,7 @@ def reduce_turn_context(
 
 What happens:
 
-1. **Apply mutations** — `apply_mutations(transcript, pending_mutations)` processes each mutation in order:
+1. **Apply runtime patches** — `apply_mutations(transcript, pending_mutations)` processes each mutation in order:
    - `AssistantMessageMutation` → appends assistant message
    - `ToolResultMutation` → appends tool result
    - `ContextReplaceMutation` → replaces entire list
@@ -62,7 +62,7 @@ class ReducedTurnContext:
 
 ## Stage 2: Convert to LLM Request
 
-`convert_to_llm_request` takes the reduced context and produces the final messages for the provider.
+`convert_to_llm_request` takes the reduced transcript plus the invocation's prompt contract and produces the final messages for the provider.
 
 ```python
 def convert_to_llm_request(
@@ -121,7 +121,7 @@ while has_more_work:
     pending = llm_result.mutations + tool_result.mutations
 ```
 
-Every iteration goes through the full pipeline. No shortcuts, no "just append to the list." This guarantees that even after 50 tool calls, the context state is consistent and auditable.
+Every iteration goes through the full pipeline. Runtime side effects do not "just append to the live list"; they produce patches that are applied at the boundary. This guarantees that even after 50 tool calls, the transcript state is consistent and auditable.
 
 ## The Single Entry Point
 
@@ -149,15 +149,14 @@ The split enables:
 
 ## Practical Implications
 
-For most users, this is invisible. You write a function, it works.
+For most users, this is invisible. You write a function, pass history, mount tools, and consume events.
 
-But when you need to:
-- **Debug context issues** → Check what mutations were produced and in what order
-- **Inject custom mutations** → Produce typed `ContextMutation` objects from hooks
+But when you need to debug internals:
+- **Debug transcript issues** → Check what runtime patches were produced and in what order
 - **Understand system prompt behavior** → Know the priority order in Stage 2
-- **Build custom state management** → Use `reduce_turn_context` directly
+- **Build framework extensions** → Use the compile boundary instead of mutating live messages directly
 
-...the pipeline gives you complete visibility and control.
+The important distinction: mutations are internal transcript patches. They are not the source of docstrings, template parameters, tool schemas, or the initial history.
 
 <Card title="Next: SelfRef" icon="brain" href="/context/selfref">
   How durable context (experiences, compaction, forking) works through the SelfReference system.

@@ -20,7 +20,7 @@ from SimpleLLMFunc import llm_function
 )
 ```
 
-Transforms an async function into a typed LLM call. Returns `AsyncGenerator[ReactOutput, None]`.
+Transforms an async function into an `LLMFunction` callable instance. `await fn(...)` returns the parsed typed result; `fn.stream(...)` yields `ReactOutput`.
 
 ### Parameters
 
@@ -58,10 +58,8 @@ async def classify(text: str) -> Sentiment:
     pass
 
 # Usage
-from SimpleLLMFunc.hooks import responses_only
-
-async for resp in responses_only(classify("I love this!")):
-    print(resp.response)  # Sentiment(label="positive", score=0.95)
+result = await classify("I love this!")
+print(result)  # Sentiment(label="positive", score=0.95)
 ```
 
 ---
@@ -76,7 +74,6 @@ from SimpleLLMFunc import llm_chat
     toolkit: Optional[List[Tool]] = None,
     max_tool_calls: Optional[int] = DEFAULT_MAX_TOOL_CALLS,
     stream: bool = False,
-    return_mode: Literal["text", "raw"] = "text",
     strict_signature: bool = False,
     self_reference: Optional[SelfReference] = None,
     self_reference_key: Optional[str] = None,
@@ -84,7 +81,7 @@ from SimpleLLMFunc import llm_chat
 )
 ```
 
-Creates a multi-turn conversational agent. Returns `AsyncGenerator[ReactOutput, None]`.
+Creates an `LLMChat` callable instance. Calling it yields `AsyncGenerator[ReactOutput, None]` and gives SelfRef a stable agent identity.
 
 ### Parameters
 
@@ -94,7 +91,6 @@ Creates a multi-turn conversational agent. Returns `AsyncGenerator[ReactOutput, 
 | `toolkit` | `List[Tool] \| None` | `None` | Available tools |
 | `max_tool_calls` | `int \| None` | framework default | Tool call limit per invocation |
 | `stream` | `bool` | `False` | Enable streaming chunks |
-| `return_mode` | `"text" \| "raw"` | `"text"` | `"text"` = string response, `"raw"` = full message dict |
 | `strict_signature` | `bool` | `False` | Enforce strict parameter validation |
 | `self_reference` | `SelfReference \| None` | `None` | Explicit SelfReference backend |
 | `self_reference_key` | `str \| None` | `None` | Auto-create SelfReference for this key |

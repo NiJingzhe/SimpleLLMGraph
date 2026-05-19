@@ -650,10 +650,10 @@ async def main():
 
     # 使用 llm_chat
     history = []
-    async for response, updated_history in chat_with_tools("北京今天天气怎么样？", history):
-        if response:
-            print(response, end="")
-        history = updated_history
+    async for output in chat_with_tools("北京今天天气怎么样？", history):
+        if is_response_yield(output):
+            print(output.response, end="")
+            history = output.messages
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -699,7 +699,7 @@ async def supervisor(
 要点：
 
 - 推荐顺序写成 `@tool` 外层、`@llm_function` 内层。
-- 子 agent 推荐使用 `@llm_function(enable_event=False)`，这样它表现为普通 `async` tool。
+- 子 agent 推荐使用普通 `await @llm_function` 调用，这样它表现为普通 `async` tool。
 - `@llm_chat` 返回的是异步生成器；如果一定要把它当工具复用，通常需要先写一个手动 wrapper。
 - 可运行完整示例见 `examples/agent_as_tool_example.py`。
 

@@ -4,7 +4,7 @@ SimpleLLMFunc 提供了开箱即用的 TUI 装饰器，基于 `textual` + `event
 
 你可以把它直接叠加在 `@llm_chat` 上，让 Agent 具备完整的终端输入循环、流式渲染和工具调用可视化。
 
-> 提示：`@tui` 依赖事件流，务必在 `@llm_chat` 中设置 `enable_event=True`，并推荐开启 `stream=True` 以获得流式渲染体验。
+> 提示：`@tui` 依赖 `@llm_chat` 的 `ReactOutput` 事件流，推荐开启 `stream=True` 以获得流式渲染体验。
 
 ## 安装依赖
 
@@ -27,7 +27,6 @@ from SimpleLLMFunc import llm_chat, tui
     llm_interface=llm,
     toolkit=[...],
     stream=True,
-    enable_event=True,
 )
 async def agent(message: str, history=None):
     """Your agent prompt."""
@@ -96,7 +95,7 @@ def my_hook(
 
 
 @tui(custom_event_hook=[my_hook])
-@llm_chat(..., enable_event=True, stream=True)
+@llm_chat(..., stream=True)
 async def agent(message: str, history=None):
     ...
 ```

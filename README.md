@@ -21,9 +21,9 @@
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/NiJingzhe/SimpleLLMFunc/graphs/commit-activity)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/NiJingzhe/SimpleLLMFunc/pulls)
 
-### Update Notes (0.7.8)
+### Update Notes (0.8.0)
 
-**Responses API Support**: `OpenAIResponsesCompatible` as a first-class adapter. **SelfRef Fork Fixes**: child forks inherit pre-fork snapshot. **Regression Coverage**: focused tests + new `response_api_example.py`. See **[CHANGELOG](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/CHANGELOG.md)** for details.
+**Callable decorator instances**: `@llm_function` now returns `LLMFunction` and `@llm_chat` returns `LLMChat`, preserving normal call behavior while giving SelfRef a stable agent identity. **Unified chat event surface**: removed obsolete `llm_chat(return_mode=...)`; chat calls now yield `ReactOutput` directly. **Provider defaults**: `OpenAICompatible` supports per-model `api_params` in `provider.json`. See **[CHANGELOG](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/CHANGELOG.md)** for details.
 
 ### Documentation
 
@@ -37,7 +37,7 @@
 |-----------|---------|
 | **LLM is Function** | An LLM call is indistinguishable from a Python function call: signature, type hints, return value |
 | **Prompt as Code** | DocString is the system prompt. Code and prompt are never separated |
-| **Context-Centric** | Context is the single source of truth. All changes flow through structured Mutations at the compile boundary |
+| **Context-Centric** | Each LLM request is compiled from invocation config, transcript/history, and internal runtime patches |
 
 ## Quick Start
 
@@ -616,7 +616,7 @@ LANGFUSE_EXPORT_ALL_SPANS=true
   month = {February},
   title = {{SimpleLLMFunc: A New Approach to Build LLM Applications}},
   url = {https://github.com/NiJingzhe/SimpleLLMFunc},
-  version = {0.7.8},
+  version = {0.8.0},
   year = {2026}
 }
 ```

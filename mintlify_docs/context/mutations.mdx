@@ -1,11 +1,19 @@
 ---
-title: Mutations
-description: The 10 mutation types that define every possible context change
+title: Runtime Patches
+description: The internal ContextMutation types used to patch the base transcript at compile boundaries
 ---
 
-# Mutations
+# Runtime Patches
 
-Every context change in SimpleLLMFunc is expressed as a typed mutation. There are exactly 10 types. Understanding them means understanding every possible state transition in the system.
+`ContextMutation` is SimpleLLMFunc's internal typed patch protocol for transcript edits produced by runtime side effects.
+
+Mutations do **not** define the whole context. The final LLM request is compiled from:
+
+1. invocation configuration — docstring prompt, template parameters, tool guidance, output contract, SelfRef snapshot;
+2. a base transcript/message list — history, current user input, previous assistant/tool messages;
+3. runtime patches — the `ContextMutation` objects described on this page.
+
+Understanding mutations is useful when debugging framework internals, but application code usually interacts with higher-level surfaces such as tools, event streams, `history`, and SelfRef primitives.
 
 ## The Mutation Union
 
@@ -24,7 +32,7 @@ ContextMutation = Union[
 ]
 ```
 
-## Standard Flow Mutations
+## Standard Flow Patches
 
 These are produced during normal ReAct loop operation.
 
@@ -92,9 +100,9 @@ class UserMessageMutation:
 **Effect:** Appends a user message to the transcript.  
 **Producer:** Custom hooks, `AgentInputRouter`.
 
-## Context Reset Mutations
+## Context Reset Patches
 
-These replace or restructure the entire transcript.
+These replace or restructure the working transcript.
 
 ### ContextReplaceMutation
 
@@ -129,9 +137,9 @@ class ContextSummaryMutation:
 
 **Producer:** SelfRef `compact` primitive.
 
-## Experience Mutations
+## Experience Patches
 
-These modify durable experiences stored in the system context (via SelfRef).
+These update durable experiences stored in the system context (via SelfRef).
 
 ### ExperienceRememberMutation
 
@@ -161,7 +169,7 @@ class ExperienceForgetMutation:
 **Effect:** Removes the experience with the matching ID from the system context.  
 **Producer:** SelfRef `forget` primitive.
 
-## Abort Mutations
+## Abort Patches
 
 These handle interruption and cancellation.
 
@@ -209,8 +217,10 @@ Experience mutations (Remember/Forget) are accumulated and committed as a batch 
 
 ## The Guarantee
 
-If you observe unexpected context state, trace the mutation sequence. Every message in the transcript arrived through exactly one of these 10 mutation types. There is no other path.
+Runtime-produced transcript edits go through this patch protocol. This means LLM calls, tool execution, SelfRef primitives, and abort handling do not directly mutate the live transcript.
+
+This does **not** mean every LLM-visible input comes from a mutation. The initial transcript, docstring/system prompt, template parameters, tool guidance, and SelfRef snapshot are separate compile inputs.
 
 <Card title="Next: Compile Pipeline" icon="microchip" href="/context/compile-pipeline">
-  How mutations are applied and transformed into the final LLM request.
+  How invocation config, transcript, and runtime patches are transformed into the final LLM request.
 </Card>

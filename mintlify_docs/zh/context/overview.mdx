@@ -5,7 +5,7 @@ description: "核心思维模型：SimpleLLMFunc 中的上下文是什么，数�
 
 # 上下文概览
 
-本页介绍 SimpleLLMFunc 如何组织、管理和变换上下文——即 LLM 在每个推理步骤中所看到的信息。
+本页介绍 SimpleLLMFunc 如何编译上下文——即 LLM 在每个推理步骤中所看到的信息。最终发送给提供商的消息列表来自 invocation 配置、基础对话记录和内部运行时补丁。
 
 ## 核心数据结构
 
@@ -21,9 +21,9 @@ class ContextState:
     pending_mutations: List[ContextMutation]  # Changes waiting to be applied
 ```
 
-- `messages` 是实时对话记录——包含助手消息、工具结果、用户消息
+- `messages` 是当前运行状态的基础对话记录——包含助手消息、工具结果、用户消息
 - `data_from_selfref` 承载来自 SelfReference 后端的持久状态（经验、摘要）
-- `pending_mutations` 在 ReAct 迭代期间积累变更，在下一个编译边界统一应用
+- `pending_mutations` 在 ReAct 迭代期间积累内部运行时补丁，在下一个编译边界统一应用到对话记录
 
 ### CompileSource
 
@@ -62,6 +62,18 @@ class DataFromSelfRef:
     summary: Optional[Dict[str, Any]]          # Compaction summary metadata
     summary_message: Optional[Dict[str, Any]]  # The summary as a message
     working_messages: NormalizedMessageList     # Post-compaction working transcript
+```
+
+## 上下文输入
+
+SimpleLLMFunc 并不是只从 mutation 构建 LLM 上下文。每次 LLM 请求都从三类输入编译而来：
+
+1. **Invocation 配置** —— 由装饰器函数、docstring、模板参数、工具指导、返回模式和 SelfRef 快照构成的 `InvocationSpec` / prompt contract。
+2. **基础对话记录** —— 从 `history` / `chat_history`、当前用户输入以及之前最终消息构建出的 message list。
+3. **运行时补丁** —— LLM 调用、工具、SelfRef 原语、压缩以及中断/取消处理在内部产生的 `ContextMutation` 对象。
+
+```text
+provider messages = render(invocation config, patch(base transcript, runtime patches))
 ```
 
 ## 数据流：从你的代码到 LLM
@@ -120,15 +132,17 @@ class DataFromSelfRef:
 
 ## 关键不变量
 
-1. **Mutation 是唯一的写入路径** — 没有任何组件直接修改 `ContextState.messages`。所有变更都产生 `ContextMutation` 对象。
+1. **Runtime 副作用不直接编辑 live transcript** — LLM 调用、工具、SelfRef 原语和中断处理会产生 `ContextMutation` 补丁，而不是原地修改 `ContextState.messages`。
 
-2. **Mutation 先积累，再原子化应用** — 在一次 ReAct 迭代中，mutation 积累在 `pending_mutations` 中，在编译边界统一应用。
+2. **Mutation 是对话记录补丁，不是完整上下文** — docstring、模板参数、工具指导、SelfRef 快照和初始 history 来自 invocation 配置和基础对话记录。
 
-3. **编译产生快照** — 编译输出是一份克隆。原始状态永远不会被原地修改。
+3. **Mutation 先积累，再原子化应用** — 在一次 ReAct 迭代中，运行时补丁积累在 `pending_mutations` 中，在编译边界统一应用。
 
-4. **SelfRef 状态持续传播** — `DataFromSelfRef` 在编译过程中向前传递。如果 mutation 应用后的对话记录中检测到 selfref 标记，快照会被刷新。
+4. **编译产生快照** — 编译输出是一份克隆。原始状态永远不会被原地修改。
 
-5. **系统提示词的解析优先级**：
+5. **SelfRef 状态持续传播** — `DataFromSelfRef` 在编译过程中向前传递。如果 mutation 应用后的对话记录中检测到 selfref 标记，快照会被刷新。
+
+6. **系统提示词的解析优先级**：
    - SelfRef 快照（如果存在）→ 渲染基础提示词 + 经验
    - PromptContract.system_prompt（如果显式设置）
    - 对话记录中最新的系统消息
@@ -137,10 +151,10 @@ class DataFromSelfRef:
 ## 下一步
 
 <CardGroup cols={2}>
-  <Card title="Mutation 类型" icon="arrows-rotate" href="/zh/context/mutations">
-    10 种 mutation 类型——触发时机与产出内容。
+  <Card title="运行时补丁" icon="arrows-rotate" href="/zh/context/mutations">
+    内部 mutation 类型——runtime 何时产生对话记录补丁。
   </Card>
   <Card title="编译管道" icon="microchip" href="/zh/context/compile-pipeline">
-    mutation 如何变成最终的 LLM 请求。
+    invocation 配置、对话记录和补丁如何变成最终的 LLM 请求。
   </Card>
 </CardGroup>

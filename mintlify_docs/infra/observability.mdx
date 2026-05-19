@@ -26,7 +26,7 @@ LANGFUSE_EXPORT_ALL_SPANS=true
 
 ### 3. Use Normally
 
-Once configured, tracing is automatic. Every `@llm_function` and `@llm_chat` call creates:
+Once configured, tracing is automatic. Every decorated `@llm_function` and `@llm_chat` invocation creates:
 - A **trace** for the full invocation
 - **Generations** for each LLM call
 - **Spans** for tool executions

@@ -1,116 +1,136 @@
 ---
 title: Context-Centric
-description: Why context is the single source of truth and all changes flow through mutations
+description: Why LLM context is compiled from invocation config, transcript, and runtime patches
 ---
 
 # Context-Centric
 
-The most important architectural decision in SimpleLLMFunc: **context is a structured state machine, not a chat log**.
+SimpleLLMFunc does not treat provider messages as something every component edits directly. Each LLM call is compiled into a provider-facing message list from three inputs:
+
+1. **Invocation configuration** — docstring prompt, template parameters, tool guidance, output contract, and SelfRef snapshot.
+2. **Base transcript** — the history/current messages for this invocation.
+3. **Runtime transcript patches** — internal typed edits produced by LLM calls, tool execution, SelfRef primitives, abort handling, and compaction.
+
+This is the precise meaning of the context model:
+
+```text
+provider messages = render(invocation config, patch(base transcript, runtime patches))
+```
 
 ## The Problem
 
-In most LLM agent systems, "context" means "the list of messages we send to the model." This list gets mutated from everywhere:
-- Tools append results directly
-- The orchestration loop pushes assistant messages in
-- Memory systems inject context at arbitrary points
-- Summarization overwrites history in place
+In many agent systems, the same mutable message list is edited from everywhere:
 
-The result: unpredictable context. You can't reason about what the model will see because multiple components write to the same mutable list with no coordination.
+- tools append results directly;
+- orchestration pushes assistant messages into the list;
+- memory systems inject or rewrite context in arbitrary places;
+- summarization overwrites history in place;
+- abort/cancel handling leaves partially valid messages behind.
 
-## The Mutation Model
+The result is unpredictable context. It becomes difficult to answer: "what exactly will the model see next?"
 
-In SimpleLLMFunc, nothing writes to context directly. Instead:
+## The Runtime Patch Model
 
-1. **Producers** (LLM calls, tool executions, selfref hooks) emit **mutations** — typed objects that describe what should change
-2. **Mutations accumulate** during a ReAct iteration
-3. At the **compile boundary**, all pending mutations are applied atomically to produce the next context state
-4. Only the **compiled result** becomes visible to the LLM
+SimpleLLMFunc uses `ContextMutation` as an **internal transcript patch protocol**.
 
-```
-Producer → Mutation → [accumulate] → Compile → LLM sees result
-```
+A mutation is not the whole context and not the user's main API. It is a typed incremental edit to the base transcript, produced by runtime side effects and applied at a compile boundary.
 
-This is the same principle as database transactions or React's state batching: gather all changes, apply them together, produce a consistent snapshot.
-
-## The 10 Mutation Types
-
-Every possible context change maps to exactly one of these:
-
-| Mutation | What It Does |
-|----------|-------------|
-| `AssistantMessage` | Append the model's response (text or tool calls) |
-| `ToolResult` | Attach a tool's output to its corresponding call |
-| `MultimodalToolResult` | Tool returned images/mixed content |
-| `UserMessage` | Append a new user message |
-| `ContextReplace` | Replace the entire message list (hard reset) |
-| `ContextSummary` | Replace with a summary + remembered experiences |
-| `ExperienceRemember` | Store a durable experience in system context |
-| `ExperienceForget` | Remove a stored experience |
-| `AssistantTruncated` | Record an aborted/truncated model response |
-| `ToolCancelled` | Record a cancelled tool call |
-
-There are no other ways to change context. If you understand these 10 types, you understand every possible context transition in the system.
-
-## Why This Matters
-
-### Predictability
-
-At any point, you can answer: "What will the model see?" by looking at the current context state + pending mutations. No hidden side effects, no race conditions between concurrent tools.
-
-### Auditability
-
-Every change has a typed origin. You can log mutations to see exactly what happened:
-```
-[iter 1] AssistantMessage: "Let me search for that..."
-[iter 1] ToolResult(id=call_abc): "Found: SimpleLLMFunc is..."
-[iter 2] AssistantMessage: "Based on the search results..."
+```text
+runtime side effect → ContextMutation → [accumulate] → apply to transcript → render LLM request
 ```
 
-### Safe Concurrency
+Examples:
 
-When multiple tools execute in parallel, each produces its own mutations. They're collected and applied in order at the compile boundary — no locks, no race conditions on shared message lists.
+| Runtime fact | Internal patch |
+| --- | --- |
+| LLM produced a final assistant message | `AssistantMessageMutation` |
+| Tool returned text | `ToolResultMutation` |
+| Tool returned multimodal content | `MultimodalToolResultMutation` |
+| SelfRef compacted working context | `ContextSummaryMutation` |
+| User aborted streaming LLM output | `AssistantTruncatedMutation` |
+| Tool execution was cancelled | `ToolCancelledMutation` |
 
-### Controlled Compaction
+The rule is:
 
-Context compression (summarization) is just another mutation (`ContextSummary`). It goes through the same pipeline, respects the same ordering rules, and produces a deterministic result.
+> Runtime side effects do not directly mutate the live transcript. They produce typed patches, and the compile boundary applies those patches in order.
+
+This keeps tool scheduling, LLM output handling, SelfRef, compaction, and abort behavior from racing over the same mutable list.
+
+## What Mutations Are Not
+
+Mutations are deliberately narrower than "context".
+
+They are **not**:
+
+- the source of the docstring/system prompt;
+- the source of template parameters;
+- the source of tool schemas or tool best-practice prompts;
+- the source of the initial `history` passed to `@llm_chat`;
+- the public event stream consumed by UIs;
+- the primary user-facing way to customize an agent.
+
+Those belong to invocation configuration, transcript input, tools, SelfRef primitives, or event consumers.
+
+## Why This Still Matters
+
+### Safe concurrency
+
+Parallel tools can finish in any order. Instead of each tool directly appending to a shared message list, tools produce result patches. The runtime collects them and applies them at the next compile boundary.
+
+### Controlled compaction
+
+Context compaction is a transcript patch. It can replace stale working messages with a summary while preserving system prompt and durable experiences.
+
+### Valid abort/cancel state
+
+Abort handling must leave a structurally valid transcript. `AssistantTruncatedMutation` and `ToolCancelledMutation` centralize this repair logic instead of scattering it across the loop.
+
+### Testable internals
+
+Patch application can be tested separately from prompt rendering and provider transport.
 
 ## The Compile Boundary
 
-The compile boundary is where mutations become messages:
+The compile boundary has two jobs:
 
-```
+1. **Patch the base transcript** with pending runtime mutations.
+2. **Render the provider request** from the patched transcript plus invocation configuration.
+
+```text
 ┌─────────────────────────────────────────────┐
-│  ReAct Iteration N                           │
-│                                              │
-│  LLM call → AssistantMessage mutation        │
-│  Tool exec → ToolResult mutations            │
-│  SelfRef hook → Experience mutations         │
-│                                              │
+│  Inputs                                      │
+│                                             │
+│  Invocation config                           │
+│    - docstring / prompt contract             │
+│    - template params                         │
+│    - tool guidance                           │
+│    - SelfRef snapshot                        │
+│                                             │
+│  Base transcript / history                   │
+│  Runtime patches (ContextMutation[])         │
 ├──────────── COMPILE BOUNDARY ────────────────┤
-│                                              │
-│  apply_mutations(state, pending_mutations)   │
-│  → produces new ContextState                 │
-│                                              │
-│  convert_to_llm_request(context)             │
-│  → produces messages[] for the provider      │
-│                                              │
+│                                             │
+│  apply_mutations(transcript, patches)        │
+│  → patched transcript                        │
+│                                             │
+│  convert_to_llm_request(...)                 │
+│  → provider-facing messages[]                │
 └─────────────────────────────────────────────┘
 ```
 
-See [Compile Pipeline](/context/compile-pipeline) for the full technical walkthrough.
+See [Compile Pipeline](/context/compile-pipeline) for the technical walkthrough.
 
-## The Practical Implication
+## Practical Implication
 
-For most users, this is invisible — you write a function, it works. The mutation model is the implementation detail that makes it work reliably.
+For most users, mutations are invisible. You write functions, provide history, mount tools, consume events, and optionally use SelfRef primitives.
 
-But when you need to:
-- Understand why the agent "forgot" something → check which mutation replaced context
-- Build a custom memory system → emit the right mutations
-- Debug unexpected behavior → trace the mutation log
-- Implement context compression → use `ContextSummary` mutation via selfref
+If you are debugging framework internals, mutations explain how runtime effects become transcript edits. If you are building application code, your main surfaces are still:
 
-...the mutation model gives you a complete, typed vocabulary for every possible context change.
+- `@llm_function` / `@llm_chat` signatures and docstrings;
+- `history` / `chat_history`;
+- tools and event streams;
+- SelfRef primitives such as `remember(...)` and `compact(...)`.
 
-<Card title="Deep dive: All 10 Mutations" icon="list" href="/context/mutations">
-  See each mutation type, when it fires, and what it produces.
+<Card title="Deep dive: Runtime Patches" icon="list" href="/context/mutations">
+  See the internal mutation types and when the runtime produces them.
 </Card>

@@ -47,6 +47,7 @@ from SimpleLLMFunc.llm_decorator.invocation_spec import InvocationSpec
 from SimpleLLMFunc.type.message import MessageList, NormalizedMessageList
 from SimpleLLMFunc.type.tool_call import ToolDefinitionList
 
+
 def _build_react_loop_invocation_spec(
     *,
     compile_source: Optional[CompileSource],
@@ -58,12 +59,17 @@ def _build_react_loop_invocation_spec(
     func_name: str,
     llm_kwargs: Dict[str, Any],
 ):
-    from SimpleLLMFunc.llm_decorator.invocation_spec import PromptContract, TranscriptSeed
+    from SimpleLLMFunc.llm_decorator.invocation_spec import (
+        PromptContract,
+        TranscriptSeed,
+    )
 
     if compile_source is not None:
         prompt_contract = PromptContract(
             base_instruction=compile_source.data_from_agent_config.base_system_prompt,
-            tool_prompt_specs=list(compile_source.data_from_agent_config.tool_prompt_specs),
+            tool_prompt_specs=list(
+                compile_source.data_from_agent_config.tool_prompt_specs
+            ),
             include_must_principles=compile_source.data_from_agent_config.include_must_principles,
         )
         template_params = compile_source.data_from_agent_config.template_params
@@ -88,9 +94,10 @@ def _build_react_loop_invocation_spec(
         template_params=template_params,
         llm_kwargs=dict(llm_kwargs),
         stream=stream,
-        return_mode="text",
         prompt_contract=prompt_contract,
-        transcript_seed=TranscriptSeed(initial_messages=cast(NormalizedMessageList, messages)),
+        transcript_seed=TranscriptSeed(
+            initial_messages=cast(NormalizedMessageList, messages)
+        ),
         data_from_selfref=data_from_selfref,
     )
 
@@ -146,10 +153,14 @@ async def run_react_loop(
     invocation_spec: Optional[InvocationSpec] = None,
 ) -> AsyncGenerator[ReactOutput, None]:
     func_name = get_current_context_attribute("function_name") or "Unknown Function"
-    current_trace_id = trace_id or get_current_trace_id() or f"trace_{int(time.time() * 1000)}"
+    current_trace_id = (
+        trace_id or get_current_trace_id() or f"trace_{int(time.time() * 1000)}"
+    )
     model_parameters = {k: v for k, v in llm_kwargs.items() if k != "retry_times"}
     trace_context = get_langfuse_trace_context()
-    event_bus = EventBus(session_id=current_trace_id, agent_call_id=f"agent_{current_trace_id}")
+    event_bus = EventBus(
+        session_id=current_trace_id, agent_call_id=f"agent_{current_trace_id}"
+    )
     start_time = time.time()
 
     state = ReActHookExecutionContext(
@@ -165,7 +176,9 @@ async def run_react_loop(
     loop_state = ReactLoopState(
         context_state=ContextState(
             messages=state.messages,
-            data_from_selfref=(compile_source.data_from_selfref if compile_source is not None else None),
+            data_from_selfref=(
+                compile_source.data_from_selfref if compile_source is not None else None
+            ),
         )
     )
 
@@ -189,7 +202,9 @@ async def run_react_loop(
         loop_state.pending_mutations.extend(
             await collect_react_context_mutations(hooks, state)
         )
-        compiled = compile_context(loop_state.context_state, loop_state.pending_mutations)
+        compiled = compile_context(
+            loop_state.context_state, loop_state.pending_mutations
+        )
         loop_state.context_state = ContextState(
             messages=compiled.messages,
             data_from_selfref=compiled.data_from_selfref,
@@ -284,7 +299,10 @@ async def run_react_loop(
             state.aborted = llm_result.aborted
             await run_react_hook(hooks, "after_llm_call", state)
             generation_span.update(
-                output={"content": llm_result.content, "tool_calls": llm_result.tool_calls},
+                output={
+                    "content": llm_result.content,
+                    "tool_calls": llm_result.tool_calls,
+                },
             )
 
         llm_mutations = list(llm_result.mutations)
@@ -313,7 +331,12 @@ async def run_react_loop(
                 total_tool_calls=loop_state.total_tool_calls,
                 total_llm_calls=loop_state.total_llm_calls,
                 total_token_usage=llm_result.usage,
-                extra={"aborted": True, "abort_reason": abort_signal.reason if abort_signal is not None else ""},
+                extra={
+                    "aborted": True,
+                    "abort_reason": abort_signal.reason
+                    if abort_signal is not None
+                    else "",
+                },
             )
             yield await _emit_event(react_end)
             return
@@ -346,7 +369,11 @@ async def run_react_loop(
             yield await _emit_event(react_end)
             return
 
-        if max_tool_calls is not None and loop_state.total_tool_calls + len(llm_result.tool_calls) > max_tool_calls:
+        if (
+            max_tool_calls is not None
+            and loop_state.total_tool_calls + len(llm_result.tool_calls)
+            > max_tool_calls
+        ):
             final_compiled = compile_context(loop_state.context_state, [])
             final_call_result = SingleLLMCallResult()
             loop_state.total_llm_calls += 1
@@ -359,7 +386,8 @@ async def run_react_loop(
                 as_type="generation",
                 name=f"{func_name}_final_llm_call",
                 input=compile_invocation_turn(
-                    invocation_spec or _build_react_loop_invocation_spec(
+                    invocation_spec
+                    or _build_react_loop_invocation_spec(
                         compile_source=compile_source,
                         messages=state.messages,
                         tool_prompt_specs=tool_prompt_specs,
@@ -386,7 +414,8 @@ async def run_react_loop(
                 trace_context=trace_context,
             ) as generation_span:
                 final_llm_input = compile_invocation_turn(
-                    invocation_spec or _build_react_loop_invocation_spec(
+                    invocation_spec
+                    or _build_react_loop_invocation_spec(
                         compile_source=compile_source,
                         messages=state.messages,
                         tool_prompt_specs=tool_prompt_specs,

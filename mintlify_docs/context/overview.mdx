@@ -5,7 +5,7 @@ description: "The mental model: what IS context in SimpleLLMFunc and how data fl
 
 # Context Overview
 
-This page explains how SimpleLLMFunc structures, manages, and transforms context — the information the LLM sees at each reasoning step.
+This page explains how SimpleLLMFunc compiles context — the information the LLM sees at each reasoning step. The final provider-facing message list is built from invocation configuration, a base transcript, and internal runtime patches.
 
 ## The Core Data Structures
 
@@ -21,9 +21,9 @@ class ContextState:
     pending_mutations: List[ContextMutation]  # Changes waiting to be applied
 ```
 
-- `messages` is the live transcript — assistant messages, tool results, user messages
+- `messages` is the base transcript for the current runtime state — assistant messages, tool results, user messages
 - `data_from_selfref` carries durable state from the SelfReference backend (experiences, summaries)
-- `pending_mutations` accumulates changes during a ReAct iteration, applied at the next compile boundary
+- `pending_mutations` accumulates internal runtime patches during a ReAct iteration, applied to the transcript at the next compile boundary
 
 ### CompileSource
 
@@ -62,6 +62,18 @@ class DataFromSelfRef:
     summary: Optional[Dict[str, Any]]          # Compaction summary metadata
     summary_message: Optional[Dict[str, Any]]  # The summary as a message
     working_messages: NormalizedMessageList     # Post-compaction working transcript
+```
+
+## Context Inputs
+
+SimpleLLMFunc does not build LLM context from mutations alone. Each LLM request is compiled from three inputs:
+
+1. **Invocation configuration** — the `InvocationSpec` / prompt contract built from the decorated function, docstring, template parameters, tool guidance, return mode, and SelfRef snapshot.
+2. **Base transcript** — the message list created from `history` / `chat_history`, the current user input, and the previous finalized messages.
+3. **Runtime patches** — `ContextMutation` objects produced internally by LLM calls, tools, SelfRef primitives, compaction, and abort/cancel handling.
+
+```text
+provider messages = render(invocation config, patch(base transcript, runtime patches))
 ```
 
 ## Data Flow: From Your Code to the LLM
@@ -120,15 +132,17 @@ class DataFromSelfRef:
 
 ## The Key Invariants
 
-1. **Mutations are the only write path** — No component directly modifies `ContextState.messages`. All changes produce `ContextMutation` objects.
+1. **Runtime side effects do not edit the live transcript directly** — LLM calls, tools, SelfRef primitives, and abort handling produce `ContextMutation` patches instead of mutating `ContextState.messages` in place.
 
-2. **Mutations accumulate, then apply atomically** — During a ReAct iteration, mutations collect in `pending_mutations`. They're applied together at the compile boundary.
+2. **Mutations are transcript patches, not the whole context** — docstrings, template params, tool guidance, SelfRef snapshots, and initial history come from invocation configuration and the base transcript.
 
-3. **Compile produces a snapshot** — The compiled output is a clone. The original state is never mutated in place.
+3. **Mutations accumulate, then apply atomically** — During a ReAct iteration, runtime patches collect in `pending_mutations`. They're applied together at the compile boundary.
 
-4. **SelfRef state propagates** — `DataFromSelfRef` is carried forward through compilations. If selfref markers are detected in the transcript after mutation application, the snapshot is refreshed.
+4. **Compile produces a snapshot** — The compiled output is a clone. The original state is never mutated in place.
 
-5. **System prompt resolution has priority order**:
+5. **SelfRef state propagates** — `DataFromSelfRef` is carried forward through compilations. If selfref markers are detected in the transcript after mutation application, the snapshot is refreshed.
+
+6. **System prompt resolution has priority order**:
    - SelfRef snapshot (if present) → renders base prompt + experiences
    - PromptContract.system_prompt (if set explicitly)
    - Latest system message in transcript
@@ -137,10 +151,10 @@ class DataFromSelfRef:
 ## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="Mutations" icon="arrows-rotate" href="/context/mutations">
-    The 10 mutation types — when they fire and what they produce.
+  <Card title="Runtime Patches" icon="arrows-rotate" href="/context/mutations">
+    The internal mutation types — when runtime effects produce transcript patches.
   </Card>
   <Card title="Compile Pipeline" icon="microchip" href="/context/compile-pipeline">
-    How mutations become the final LLM request.
+    How invocation config, transcript, and patches become the final LLM request.
   </Card>
 </CardGroup>

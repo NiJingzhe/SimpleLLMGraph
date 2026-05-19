@@ -58,7 +58,7 @@ from SimpleLLMFunc.hooks import is_event_yield, LLMChunkArriveEvent
 async for output in assistant("Tell me about Python", history):
     if is_event_yield(output):
         if isinstance(output.event, LLMChunkArriveEvent):
-            print(output.event.chunk, end="", flush=True)
+            print(output.event.accumulated_content, end="", flush=True)
     elif is_response_yield(output):
         history = output.messages
 ```
@@ -80,8 +80,8 @@ async def agent(message: str, history: list | None = None):
 ReAct 循环自动处理工具调用：
 1. LLM 决定调用工具 → `ToolCallStartEvent`
 2. 框架执行工具 → `ToolCallEndEvent`
-3. 结果通过 `ToolResultMutation` 添加到上下文
-4. 重新编译上下文 → LLM 看到结果 → 决定下一步操作
+3. 运行时将工具结果记录为内部对话记录补丁
+4. 重新编译上下文 → LLM 看到修补后的对话记录 → 决定下一步操作
 
 `max_tool_calls` 限制每次调用中工具调用的总次数。默认值由框架定义。`None` 表示不限制。
 
@@ -188,7 +188,6 @@ results = await asyncio.gather(
 | `toolkit` | `List[Tool]` | `None` | 可用工具 |
 | `max_tool_calls` | `int \| None` | 框架默认值 | 工具调用次数限制 |
 | `stream` | `bool` | `False` | 启用流式传输 |
-| `return_mode` | `"text" \| "raw"` | `"text"` | 响应格式 |
 | `self_reference` | `SelfReference \| None` | `None` | 显式指定 selfref 后端 |
 | `self_reference_key` | `str \| None` | `None` | 自动为该 key 创建 selfref |
 | `**llm_kwargs` | `Any` | — | 传递给 LLM 的参数（temperature 等） |

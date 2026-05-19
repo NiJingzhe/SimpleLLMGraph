@@ -58,7 +58,7 @@ from SimpleLLMFunc.hooks import is_event_yield, LLMChunkArriveEvent
 async for output in assistant("Tell me about Python", history):
     if is_event_yield(output):
         if isinstance(output.event, LLMChunkArriveEvent):
-            print(output.event.chunk, end="", flush=True)
+            print(output.event.accumulated_content, end="", flush=True)
     elif is_response_yield(output):
         history = output.messages
 ```
@@ -80,8 +80,8 @@ async def agent(message: str, history: list | None = None):
 The ReAct loop handles tool calling automatically:
 1. LLM decides to call a tool → `ToolCallStartEvent`
 2. Framework executes the tool → `ToolCallEndEvent`
-3. Result added to context via `ToolResultMutation`
-4. Context recompiled → LLM sees result → decides next action
+3. The runtime records the tool result as an internal transcript patch
+4. Context is recompiled → LLM sees the patched transcript → decides next action
 
 `max_tool_calls` limits total tool calls per invocation. Default is framework-defined. `None` means unlimited.
 
@@ -188,7 +188,6 @@ results = await asyncio.gather(
 | `toolkit` | `List[Tool]` | `None` | Available tools |
 | `max_tool_calls` | `int \| None` | framework default | Tool call limit |
 | `stream` | `bool` | `False` | Enable streaming |
-| `return_mode` | `"text" \| "raw"` | `"text"` | Response format |
 | `self_reference` | `SelfReference \| None` | `None` | Explicit selfref backend |
 | `self_reference_key` | `str \| None` | `None` | Auto-create selfref for this key |
 | `**llm_kwargs` | `Any` | — | Passed to LLM (temperature, etc.) |

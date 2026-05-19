@@ -72,13 +72,7 @@ def test_response_api_example_decorator_sets_reasoning_kwargs(
     wrapped = example_module.core_agent
     assert getattr(wrapped, "__name__", "") == "core_agent"
 
-    closure_cells = wrapped.__closure__ or ()
-    llm_kwargs = None
-    for cell in closure_cells:
-        value = cell.cell_contents
-        if isinstance(value, dict) and isinstance(value.get("reasoning"), dict):
-            llm_kwargs = value
-            break
+    llm_kwargs = getattr(wrapped, "llm_kwargs", None)
 
     assert llm_kwargs is not None
     assert llm_kwargs["reasoning"] == {

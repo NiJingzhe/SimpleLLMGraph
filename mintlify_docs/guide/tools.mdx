@@ -132,7 +132,7 @@ async def fetch_screenshot(url: str) -> ImgUrl:
     return ImgUrl(url="https://screenshot-api.example.com/capture?url=" + url)
 ```
 
-Multimodal returns are restructured via `MultimodalToolResultMutation` — the image is placed in a user message (as required by most providers).
+Multimodal returns are restructured by the runtime through an internal transcript patch — the image is placed in a user message (as required by most providers).
 
 ## Tuple Returns (mixed content)
 

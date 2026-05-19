@@ -16,6 +16,7 @@ The primary model configuration file. Defines available providers and models:
       "model_name": "openai/gpt-4o",
       "api_keys": ["sk-key-1", "sk-key-2"],
       "base_url": "https://openrouter.ai/api/v1",
+      "api_params": {"reasoning_effort": "high"},
       "max_retries": 5,
       "retry_delay": 1.0,
       "rate_limit_capacity": 20,
@@ -58,6 +59,7 @@ The primary model configuration file. Defines available providers and models:
 | `model_name` | string | yes | Model identifier for the provider |
 | `api_keys` | string[] | yes | One or more API keys (rotated) |
 | `base_url` | string | yes | API endpoint base URL |
+| `api_params` | object | no | Extra default API kwargs for this model (for example `reasoning_effort`). Call-time kwargs override these values. |
 | `max_retries` | int | no | Retry count on transient failures. Default: 5 |
 | `retry_delay` | float | no | Seconds between retries. Default: 1.0 |
 | `rate_limit_capacity` | int | no | Token bucket capacity. Default: 10 |
@@ -85,6 +87,7 @@ llm = models["openrouter"]["openai/gpt-4o"]
 
 - Keep one `provider.json` per project (version control it minus the keys)
 - Put multiple keys in `api_keys` for hot models (automatic rotation)
+- Use `api_params` for stable per-model defaults such as `reasoning_effort`; pass call-time kwargs when you need a one-off override
 - Tune `rate_limit_capacity` and `rate_limit_refill_rate` per model based on your tier
 - Use `max_retries=2` for local models (fast failure), `max_retries=5` for cloud (transient errors)
 

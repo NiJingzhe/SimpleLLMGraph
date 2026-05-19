@@ -125,12 +125,12 @@ async def research(question: str) -> ResearchReport:
 
 ## 事件流模式
 
-`@llm_function` 始终返回 `AsyncGenerator[ReactOutput, None]`：
+`@llm_function` 返回 `LLMFunction` callable instance。普通调用使用 `await fn(...)`；需要 `ReactOutput` 时使用 `fn.stream(...)`：
 
 ```python
 from SimpleLLMFunc.hooks import is_response_yield, is_event_yield
 
-async for output in translate("hello", "French"):
+async for output in translate.stream("hello", "French"):
     if is_response_yield(output):
         result = output.response  # 类型化的 Translation 对象
     elif is_event_yield(output):
@@ -143,7 +143,7 @@ async for output in translate("hello", "French"):
 ```python
 from SimpleLLMFunc.hooks import responses_only
 
-async for response in responses_only(translate("hello", "French")):
+async for response in responses_only(translate.stream("hello", "French")):
     result = response.response
 ```
 
@@ -157,7 +157,7 @@ from SimpleLLMFunc.hooks import AbortSignal
 signal = AbortSignal()
 
 async def run():
-    async for output in translate("...", "French", _abort_signal=signal):
+    async for output in translate.stream("...", "French", _abort_signal=signal):
         ...
 
 # 从另一个任务中取消：

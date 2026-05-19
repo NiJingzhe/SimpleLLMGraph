@@ -57,7 +57,6 @@ class InvocationSpec:
     template_params: Optional[Mapping[str, Any]]
     llm_kwargs: Mapping[str, Any]
     stream: bool
-    return_mode: Optional[Literal["text", "raw", "typed"]]
     prompt_contract: PromptContract
     transcript_seed: TranscriptSeed
     data_from_selfref: Optional[DataFromSelfRef] = None

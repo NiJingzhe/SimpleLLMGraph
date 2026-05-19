@@ -19,7 +19,9 @@ from SimpleLLMFunc.base.types import (
 from SimpleLLMFunc.base.llm_input_render import render_llm_input_messages
 from SimpleLLMFunc.base.types import ContextMutation
 from SimpleLLMFunc.llm_decorator.invocation_spec import InvocationSpec, PromptContract
-from SimpleLLMFunc.runtime.selfref.context_ops import render_system_prompt_with_experiences
+from SimpleLLMFunc.runtime.selfref.context_ops import (
+    render_system_prompt_with_experiences,
+)
 from SimpleLLMFunc.type.message import NormalizedMessageList, NormalizedMessageParam
 
 
@@ -101,7 +103,11 @@ def convert_to_llm_request(
         reduced.selfref_snapshot,
     )
 
-    if transcript and isinstance(transcript[0], dict) and transcript[0].get("role") == "system":
+    if (
+        transcript
+        and isinstance(transcript[0], dict)
+        and transcript[0].get("role") == "system"
+    ):
         if system_prompt:
             transcript[0] = cast(
                 NormalizedMessageParam,
@@ -146,7 +152,10 @@ def compile_invocation_turn(
 def build_compiled_messages_from_source(source: CompileSource) -> NormalizedMessageList:
     """Compatibility adapter from Stage 1 ``CompileSource`` to Stage 2 pipeline."""
 
-    from SimpleLLMFunc.llm_decorator.invocation_spec import PromptContract, TranscriptSeed
+    from SimpleLLMFunc.llm_decorator.invocation_spec import (
+        PromptContract,
+        TranscriptSeed,
+    )
 
     spec = InvocationSpec(
         mode="chat",
@@ -159,7 +168,6 @@ def build_compiled_messages_from_source(source: CompileSource) -> NormalizedMess
         template_params=source.data_from_agent_config.template_params,
         llm_kwargs={},
         stream=False,
-        return_mode="text",
         prompt_contract=PromptContract(
             base_instruction=source.data_from_agent_config.base_system_prompt,
             tool_prompt_specs=list(source.data_from_agent_config.tool_prompt_specs),

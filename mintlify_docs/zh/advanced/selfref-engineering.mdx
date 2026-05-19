@@ -54,7 +54,7 @@ payload = runtime.selfref.context.compact(
 
 1. 在 `execute_code` 内调用 `compact(...)`
 2. 压缩被**加入队列**（不会立即生效）
-3. 当前工具批次完成后，`ContextSummaryMutation` 被应用
+3. 当前工具批次完成后，运行时会将压缩补丁应用到对话记录
 4. 系统提示词和 experiences 被保留
 5. 工作对话被替换为摘要消息
 6. Agent 的下一轮对话从精简的上下文开始

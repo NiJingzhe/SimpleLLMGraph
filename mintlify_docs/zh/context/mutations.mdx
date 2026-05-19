@@ -1,11 +1,19 @@
 ---
-title: Mutation 类型
-description: 定义所有上下文变更的 10 种 mutation 类型
+title: 运行时补丁
+description: 在编译边界修补基础对话记录的内部 ContextMutation 类型
 ---
 
-# Mutation 类型
+# 运行时补丁
 
-SimpleLLMFunc 中的每一次上下文变更都通过类型化的 mutation 来表达。一共只有 10 种类型。理解它们就等于理解了系统中所有可能的状态转换。
+`ContextMutation` 是 SimpleLLMFunc 的内部类型化补丁协议，用来描述 runtime 副作用对对话记录产生的增量编辑。
+
+Mutation 并不定义完整上下文。最终 LLM 请求来自：
+
+1. invocation 配置——docstring 提示词、模板参数、工具指导、输出契约、SelfRef 快照；
+2. 基础对话记录/message list——history、当前用户输入、之前的助手/工具消息；
+3. 运行时补丁——本页描述的 `ContextMutation` 对象。
+
+理解 mutation 对调试框架内部很有帮助，但应用代码通常通过工具、事件流、`history` 和 SelfRef 原语等更高层接口交互。
 
 ## Mutation 联合类型
 
@@ -24,7 +32,7 @@ ContextMutation = Union[
 ]
 ```
 
-## 标准流程 Mutation
+## 标准流程补丁
 
 这些 mutation 在正常的 ReAct 循环运行中产生。
 
@@ -92,9 +100,9 @@ class UserMessageMutation:
 **效果：** 在对话记录中追加一条用户消息。
 **生产者：** 自定义 hook、`AgentInputRouter`。
 
-## 上下文重置 Mutation
+## 对话记录重置补丁
 
-这些 mutation 替换或重组整个对话记录。
+这些 mutation 替换或重组工作对话记录。
 
 ### ContextReplaceMutation
 
@@ -129,9 +137,9 @@ class ContextSummaryMutation:
 
 **生产者：** SelfRef 的 `compact` 原语。
 
-## 经验 Mutation
+## 经验补丁
 
-这些 mutation 修改存储在系统上下文中的持久经验（通过 SelfRef）。
+这些 mutation 更新存储在系统上下文中的持久经验（通过 SelfRef）。
 
 ### ExperienceRememberMutation
 
@@ -161,7 +169,7 @@ class ExperienceForgetMutation:
 **效果：** 从系统上下文中移除匹配 ID 的经验。
 **生产者：** SelfRef 的 `forget` 原语。
 
-## 中止 Mutation
+## 中止补丁
 
 这些 mutation 处理中断和取消的情况。
 
@@ -209,8 +217,10 @@ Mutation 按照产生的顺序依次应用。在单次 ReAct 迭代中：
 
 ## 核心保证
 
-如果你观察到了意料之外的上下文状态，请追溯 mutation 序列。对话记录中的每条消息都严格通过这 10 种 mutation 类型中的某一种到达。不存在其他路径。
+Runtime 产生的对话记录编辑会通过这个补丁协议流转。这意味着 LLM 调用、工具执行、SelfRef 原语和中断处理不会直接修改 live transcript。
+
+这并不意味着所有 LLM 可见输入都来自 mutation。初始对话记录、docstring / 系统提示词、模板参数、工具指导和 SelfRef 快照都是独立的编译输入。
 
 <Card title="下一节：编译管道" icon="microchip" href="/zh/context/compile-pipeline">
-  mutation 如何被应用并变换为最终的 LLM 请求。
+  invocation 配置、对话记录和运行时补丁如何被变换为最终的 LLM 请求。
 </Card>

@@ -56,7 +56,7 @@ SimpleLLMFunc/
 ## 关键规则
 
 - 所有被装饰的函数必须是 `async def`
-- 上下文变更必须通过 mutation（变更）流转，绝不能直接修改消息
+- Runtime 副作用必须通过内部补丁边界流转，绝不能直接修改 live messages
 - 运行时原语的文档字符串必须包含 `Best Practices` 部分
 - 测试结构与源码结构对应：`SimpleLLMFunc/base/react_loop.py` → `tests/test_base/test_react_loop.py`
 

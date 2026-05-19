@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 
 from SimpleLLMFunc import APIKeyPool, OpenAICompatible, llm_chat
+from SimpleLLMFunc.hooks.stream import is_response_yield
 from SimpleLLMFunc.builtin import FileToolset, PyRepl
 
 
@@ -38,12 +39,13 @@ async def instant_agent(message: str, history: list[dict[str, str]] | None = Non
 
 async def main() -> None:
     history: list[dict[str, str]] = []
-    async for chunk, history in instant_agent(
+    async for output in instant_agent(
         "Read README.md and give me a 5-bullet summary.",
         history,
     ):
-        if chunk:
-            print(chunk, end="", flush=True)
+        if is_response_yield(output):
+            print(output.response, end="", flush=True)
+            history = output.messages
     print()
 
 

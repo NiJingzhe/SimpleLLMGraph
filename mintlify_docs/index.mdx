@@ -5,7 +5,7 @@ description: Build typed LLM agents with Python functions
 
 # SimpleLLMFunc
 
-**LLM calls as typed Python functions. Context as single source of truth. Prompts as code.**
+**LLM calls as typed Python functions. Context compiled from prompts, history, and runtime patches. Prompts as code.**
 
 SimpleLLMFunc is a framework for building LLM-powered agents where every LLM interaction is a normal Python function call — typed, testable, and composable. No chains, no graphs, no YAML. Just functions.
 
@@ -45,7 +45,7 @@ No SDK boilerplate. No message list construction. The decorator handles context 
 
 ### Context-Centric
 
-Every piece of information the LLM sees is managed through a structured context pipeline. Changes happen through **mutations** — typed objects that describe what changed and why. The compile boundary transforms mutations into the final LLM request atomically. Nothing leaks. Nothing is silently overwritten.
+Every LLM call is compiled into a provider-facing message list. The compiler combines invocation configuration (docstrings, template values, tool guidance), the base transcript/history, and internal runtime patches. Those patches are represented as **mutations** so LLM calls, tools, SelfRef, and abort handling do not directly edit the live transcript.
 
 ### Prompt as Code
 
@@ -61,7 +61,7 @@ Your docstring IS the system prompt. It lives next to the code that uses it, ver
 │   @llm_function / @llm_chat / @tool     │
 ├─────────────────────────────────────────┤
 │         Compile Boundary                 │
-│   Mutations → Context → LLM Request     │
+│   Config + Transcript + Patches → LLM   │
 ├─────────────────────────────────────────┤
 │         ReAct Runtime                    │
 │   Event stream, tool scheduling, abort  │

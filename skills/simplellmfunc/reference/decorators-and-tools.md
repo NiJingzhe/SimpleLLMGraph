@@ -2,7 +2,7 @@
 
 ## `@llm_function`
 
-Use `@llm_function` for one-shot typed tasks.
+Use `@llm_function` for one-shot typed tasks. It returns an `LLMFunction` callable instance, not a plain function wrapper; normal `await decorated(...)` usage is unchanged. Use `decorated.stream(...)` when you need the event stream.
 
 Best practices:
 
@@ -13,7 +13,7 @@ Best practices:
 
 ## `@llm_chat`
 
-Use `@llm_chat` for agent-like or conversational behavior.
+Use `@llm_chat` for agent-like or conversational behavior. It returns an `LLMChat` callable instance whose `__call__` yields `ReactOutput` items. SelfRef binds to this stable agent instance for fork/rebinding flows.
 
 Best practices:
 
@@ -46,14 +46,14 @@ Rules that matter in practice:
 - Hidden files and out-of-workspace paths are rejected.
 - `echo_into` is for full-file replacement, not patch-style edits.
 
-## Event mode and TUI
+## Event streams and TUI
 
-Turn on `enable_event=True` when you need execution visibility.
+Event output is now the normal runtime surface; there is no `enable_event` or `return_mode` decorator option.
 
 Key differences:
 
-- `llm_function(enable_event=True)` yields `ReactOutput`; the final `ResponseYield.response` is the parsed Python result.
-- `llm_chat(enable_event=True)` also yields `ReactOutput`, but response payloads stay closer to raw response or stream chunks.
+- `decorated_llm_function.stream(...)` yields `ReactOutput`; the final `ResponseYield.response` is the parsed Python result.
+- Calling an `@llm_chat` agent yields `ReactOutput`; response payloads stay closer to raw response or stream chunks.
 
 Use the built-in TUI with the existing pattern:
 
@@ -63,10 +63,10 @@ from SimpleLLMFunc.utils.tui import tui
 
 
 @tui()
-@llm_chat(..., stream=True, enable_event=True)
+@llm_chat(..., stream=True)
 async def agent(message: str, history=None):
     """Your agent prompt."""
     pass
 ```
 
-When handling event mode manually, inspect `ResponseYield` and `EventYield` separately instead of assuming tuple outputs.
+When handling streams manually, inspect `ResponseYield` and `EventYield` separately instead of assuming `(chunk, history)` tuple outputs.

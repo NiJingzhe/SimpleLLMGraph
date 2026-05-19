@@ -16,6 +16,7 @@ description: "provider.json、环境变量和日志设置"
       "model_name": "openai/gpt-4o",
       "api_keys": ["sk-key-1", "sk-key-2"],
       "base_url": "https://openrouter.ai/api/v1",
+      "api_params": {"reasoning_effort": "high"},
       "max_retries": 5,
       "retry_delay": 1.0,
       "rate_limit_capacity": 20,
@@ -58,6 +59,7 @@ description: "provider.json、环境变量和日志设置"
 | `model_name` | string | 是 | 提供商的模型标识符 |
 | `api_keys` | string[] | 是 | 一个或多个 API 密钥（轮换使用） |
 | `base_url` | string | 是 | API 端点基础 URL |
+| `api_params` | object | 否 | 该模型的默认 API 透传参数（例如 `reasoning_effort`）。调用时传入的 kwargs 会覆盖这些默认值。 |
 | `max_retries` | int | 否 | 瞬时故障的重试次数。默认值：5 |
 | `retry_delay` | float | 否 | 重试间隔秒数。默认值：1.0 |
 | `rate_limit_capacity` | int | 否 | 令牌桶容量。默认值：10 |
@@ -85,6 +87,7 @@ llm = models["openrouter"]["openai/gpt-4o"]
 
 - 每个项目维护一个 `provider.json`（纳入版本控制，但去掉密钥）
 - 为热门模型在 `api_keys` 中配置多个密钥（自动轮换）
+- 使用 `api_params` 配置稳定的每模型默认参数，例如 `reasoning_effort`；一次性覆盖请在调用时传 kwargs
 - 根据你的服务等级调整 `rate_limit_capacity` 和 `rate_limit_refill_rate`
 - 本地模型使用 `max_retries=2`（快速失败），云端模型使用 `max_retries=5`（应对瞬时错误）
 

@@ -21,9 +21,9 @@
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/NiJingzhe/SimpleLLMFunc/graphs/commit-activity)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/NiJingzhe/SimpleLLMFunc/pulls)
 
-### 更新说明 (0.7.8)
+### 更新说明 (0.8.0)
 
-**Responses API 支持**：新增 `OpenAIResponsesCompatible` 一等适配器。**SelfRef Fork 修正**：子 fork 继承 fork 前上下文快照。**回归测试补全**：定向测试 + 新增 `response_api_example.py`。详情见 **[更新日志](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/CHANGELOG.md)**。
+**装饰器 callable instance 化**：`@llm_function` 现在返回 `LLMFunction`，`@llm_chat` 返回 `LLMChat`，保留正常调用方式，同时为 SelfRef 提供稳定的 agent identity。**统一 chat 事件输出面**：移除过时的 `llm_chat(return_mode=...)`；chat 调用现在直接产出 `ReactOutput`。**Provider 默认参数**：`OpenAICompatible` 支持在 `provider.json` 中配置每模型 `api_params`。详情见 **[更新日志](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/CHANGELOG.md)**。
 
 ### 文档
 
@@ -37,7 +37,7 @@
 |------|------|
 | **LLM is Function** | LLM 调用与 Python 函数调用无区别：签名、类型标注、返回值 |
 | **Prompt as Code** | DocString 即系统提示，代码与 Prompt 永不分离 |
-| **Context-Centric** | Context 是唯一真相源，所有变更通过结构化 Mutation 在 Compile 边界生效 |
+| **Context-Centric** | 每次 LLM 请求由 invocation 配置、对话记录/history 和内部运行时补丁编译而来 |
 
 ## 快速开始
 
@@ -615,7 +615,7 @@ LANGFUSE_EXPORT_ALL_SPANS=true
   month = {February},
   title = {{SimpleLLMFunc: A New Approach to Build LLM Applications}},
   url = {https://github.com/NiJingzhe/SimpleLLMFunc},
-  version = {0.7.8},
+  version = {0.8.0},
   year = {2026}
 }
 ```

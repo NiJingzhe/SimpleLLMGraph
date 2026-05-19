@@ -37,7 +37,7 @@ signal.abort("user cancelled")
 
 1. 流式连接被终止
 2. 已接收的内容会被保留
-3. 发出 `AssistantTruncatedMutation`，包含：
+3. 运行时产生内部截断补丁，包含：
    - `partial_content` — 中断前已接收的内容
    - `abort_reason` — 你提供的原因
 4. ReAct 循环通过终结路径退出
@@ -45,7 +45,7 @@ signal.abort("user cancelled")
 ### 工具执行期间
 
 1. 正在运行的工具被取消（asyncio 任务取消）
-2. 对每个被取消的工具，发出 `ToolCancelledMutation`，包含：
+2. 对每个被取消的工具，运行时产生内部取消补丁，包含：
    - `tool_call_id` — 被取消的调用 ID
    - `tool_name` — 正在运行的工具名称
    - `abort_reason` — 取消原因
@@ -53,7 +53,7 @@ signal.abort("user cancelled")
 
 ### 一致性保证
 
-中断操作始终产生有效的最终状态。对话记录不会遗留悬空的工具调用或不完整的消息。Mutation 机制确保了结构一致性。
+中断操作始终产生有效的最终状态。对话记录不会遗留悬空的工具调用或不完整的消息。内部对话记录补丁确保了结构一致性。
 
 ## 在 @llm_function 中使用
 
@@ -67,7 +67,7 @@ async def research(question: str) -> Report:
 
 signal = AbortSignal()
 
-async for output in research("...", _abort_signal=signal):
+async for output in research.stream("...", _abort_signal=signal):
     ...
 ```
 

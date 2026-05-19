@@ -62,7 +62,7 @@ def _default_origin() -> EventOrigin:
 class ResponseYield:
     """Response item emitted by the event stream."""
 
-    response: Union[LLMResponse, LLMStreamChunk, str]  # 根据 return_mode 决定
+    response: Union[LLMResponse, LLMStreamChunk, str]
     messages: MessageList
     type: Literal["response"] = "response"  # 放在最后，因为有默认值
 

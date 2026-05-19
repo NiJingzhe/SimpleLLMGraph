@@ -20,7 +20,7 @@ from SimpleLLMFunc import llm_function
 )
 ```
 
-将一个异步函数转换为类型化的 LLM 调用。返回 `AsyncGenerator[ReactOutput, None]`。
+将一个异步函数转换为 `LLMFunction` callable instance。`await fn(...)` 返回解析后的类型化结果；`fn.stream(...)` 产出 `ReactOutput`。
 
 ### 参数
 
@@ -58,10 +58,8 @@ async def classify(text: str) -> Sentiment:
     pass
 
 # Usage
-from SimpleLLMFunc.hooks import responses_only
-
-async for resp in responses_only(classify("I love this!")):
-    print(resp.response)  # Sentiment(label="positive", score=0.95)
+result = await classify("I love this!")
+print(result)  # Sentiment(label="positive", score=0.95)
 ```
 
 ---
@@ -76,7 +74,6 @@ from SimpleLLMFunc import llm_chat
     toolkit: Optional[List[Tool]] = None,
     max_tool_calls: Optional[int] = DEFAULT_MAX_TOOL_CALLS,
     stream: bool = False,
-    return_mode: Literal["text", "raw"] = "text",
     strict_signature: bool = False,
     self_reference: Optional[SelfReference] = None,
     self_reference_key: Optional[str] = None,
@@ -84,7 +81,7 @@ from SimpleLLMFunc import llm_chat
 )
 ```
 
-创建一个多轮对话代理（conversational agent）。返回 `AsyncGenerator[ReactOutput, None]`。
+创建一个 `LLMChat` callable instance。调用它会产出 `AsyncGenerator[ReactOutput, None]`，并为 SelfRef 提供稳定的 agent identity。
 
 ### 参数
 
@@ -94,7 +91,6 @@ from SimpleLLMFunc import llm_chat
 | `toolkit` | `List[Tool] \| None` | `None` | 可用的工具列表 |
 | `max_tool_calls` | `int \| None` | 框架默认值 | 每次调用的工具调用上限 |
 | `stream` | `bool` | `False` | 启用流式输出 |
-| `return_mode` | `"text" \| "raw"` | `"text"` | `"text"` = 字符串响应，`"raw"` = 完整消息字典 |
 | `strict_signature` | `bool` | `False` | 强制严格的参数验证 |
 | `self_reference` | `SelfReference \| None` | `None` | 显式 SelfReference（自引用）后端 |
 | `self_reference_key` | `str \| None` | `None` | 为此键自动创建 SelfReference |

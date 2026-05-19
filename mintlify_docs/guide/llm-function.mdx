@@ -125,12 +125,12 @@ The function still returns a single typed result, but internally the model may c
 
 ## Event Stream Mode
 
-`@llm_function` always returns an `AsyncGenerator[ReactOutput, None]`:
+`@llm_function` returns an `LLMFunction` callable instance. Normal calls use `await fn(...)`; use `fn.stream(...)` for `ReactOutput`:
 
 ```python
 from SimpleLLMFunc.hooks import is_response_yield, is_event_yield
 
-async for output in translate("hello", "French"):
+async for output in translate.stream("hello", "French"):
     if is_response_yield(output):
         result = output.response  # The typed Translation object
     elif is_event_yield(output):
@@ -143,7 +143,7 @@ For simple usage, collect the final response:
 ```python
 from SimpleLLMFunc.hooks import responses_only
 
-async for response in responses_only(translate("hello", "French")):
+async for response in responses_only(translate.stream("hello", "French")):
     result = response.response
 ```
 
@@ -157,7 +157,7 @@ from SimpleLLMFunc.hooks import AbortSignal
 signal = AbortSignal()
 
 async def run():
-    async for output in translate("...", "French", _abort_signal=signal):
+    async for output in translate.stream("...", "French", _abort_signal=signal):
         ...
 
 # From another task:

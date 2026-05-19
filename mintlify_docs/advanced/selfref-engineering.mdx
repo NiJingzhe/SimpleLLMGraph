@@ -54,7 +54,7 @@ Key rules:
 
 1. `compact(...)` is called inside `execute_code`
 2. The compaction is **queued** (not applied immediately)
-3. After the current tool batch finishes, `ContextSummaryMutation` is applied
+3. After the current tool batch finishes, the runtime applies a compaction patch to the transcript
 4. System prompt + experiences are preserved
 5. Working transcript is replaced with the summary message
 6. The agent's next turn starts with fresh, compact context

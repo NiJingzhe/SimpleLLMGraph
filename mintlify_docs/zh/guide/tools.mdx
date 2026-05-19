@@ -132,7 +132,7 @@ async def fetch_screenshot(url: str) -> ImgUrl:
     return ImgUrl(url="https://screenshot-api.example.com/capture?url=" + url)
 ```
 
-多模态返回通过 `MultimodalToolResultMutation` 进行重组——图片会被放置在用户消息中（大多数提供商的要求）。
+多模态返回会由运行时通过内部对话记录补丁进行重组——图片会被放置在用户消息中（大多数提供商的要求）。
 
 ## 元组返回（混合内容）
 

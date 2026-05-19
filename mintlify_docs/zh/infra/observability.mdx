@@ -26,7 +26,7 @@ LANGFUSE_EXPORT_ALL_SPANS=true
 
 ### 3. 正常使用即可
 
-配置完成后，追踪是自动进行的。每次 `@llm_function` 和 `@llm_chat` 调用都会创建：
+配置完成后，追踪是自动进行的。每次被 `@llm_function` 和 `@llm_chat` 装饰的调用都会创建：
 - 一个 **Trace**，对应完整的调用生命周期
 - **Generation** 记录，对应每次 LLM 调用
 - **Span** 记录，对应每次工具执行

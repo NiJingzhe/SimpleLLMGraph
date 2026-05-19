@@ -5,7 +5,7 @@ license: MIT
 compatibility: "Python 3.12+ repo with pytest, Poetry, Mintlify docs, and SimpleLLMFunc source tree available."
 metadata:
   project: SimpleLLMFunc
-  version: "0.7.8"
+  version: "0.8.0"
 ---
 
 # SimpleLLMFunc Framework Development
@@ -17,7 +17,7 @@ metadata:
 ## Core development philosophy
 - **LLM is Function**: preserve the framework's function-first design — LLM calls are indistinguishable from Python function calls.
 - **Prompt as Code**: docstrings are system prompts. Code and prompts are never separated.
-- **Context-Centric**: context is the single source of truth. All changes flow through structured Mutations at the compile boundary. No component may directly modify the live ReAct context.
+- **Context-Centric**: each provider request is compiled from invocation configuration, a base transcript/history, and runtime transcript patches. `ContextMutation` is an internal typed patch protocol, not the whole context source of truth. No component may directly modify the live ReAct transcript.
 - Keep public behavior explicit and typed.
 - Favor small, composable modules over hidden orchestration.
 - Prefer explicit boundaries between pure transforms, state mutation, and orchestration side effects. Recent selfref/ReAct work depends on keeping those lines sharp.
@@ -43,14 +43,14 @@ metadata:
 
 ### L1. Decorator Layer (`llm_decorator/`)
 Public entry points and invocation contract building.
-- `llm_function_decorator.py`: `@llm_function` — stateless LLM → typed result
-- `llm_chat_decorator.py`: `@llm_chat` — stateful agent → ReactOutput stream
+- `llm_function_decorator.py`: `@llm_function` — returns an `LLMFunction` callable instance; `await instance(...)` gives typed result, `instance.stream(...)` yields `ReactOutput`
+- `llm_chat_decorator.py`: `@llm_chat` — returns an `LLMChat` callable instance; calling it yields a `ReactOutput` async stream and provides a stable SelfRef agent identity
 - `invocation_spec.py`: `InvocationSpec`, `PromptContract`, `TranscriptSeed`
 - `invocation_builder.py`: `build_function_invocation_spec()`, `build_chat_invocation_spec()`
 - `prompt_contract.py`: prompt templates, XML Schema generation, type descriptions
 - `signature.py`: `parse_function_signature()`, trace_id, log context
 - `utils/tools.py`: `process_tools()`, `collect_tool_prompt_specs()`
-- `selfref_sync.py`: `SelfRefSession` ReAct lifecycle hooks, history finalization
+- `selfref_sync.py`: legacy compatibility shim around `SelfRefSession`; active `llm_chat` binding/session orchestration lives in `LLMChat` plus `runtime/selfref/session.py`
 
 ### L2+L3. Compile Boundary + ReAct Runtime (`base/`)
 Mutation-driven context evolution and event-only ReAct loop.
@@ -127,21 +127,22 @@ Mirror of behavior and architecture; often the fastest place to infer convention
 
 ## Framework-specific development rules
 
-### Core rule: mutation boundary
-All context changes must flow through the mutation pipeline:
-1. Producers (LLM call, tool exec, selfref hooks) emit `ContextMutation` objects.
+### Core rule: runtime transcript patch boundary
+LLM-visible messages are compiled from invocation config, a base transcript/history, and runtime patches:
+1. Producers (LLM call, tool exec, selfref hooks) emit `ContextMutation` objects for runtime transcript edits.
 2. `react_loop` collects mutations before each compile boundary.
 3. `compile_context()` applies mutations in order via `apply_mutations()`.
-4. Only the compiled result becomes LLM-visible.
+4. The compile pipeline combines that patched transcript with invocation config and SelfRef source data before rendering provider messages.
 
-Do not introduce code that directly mutates `ContextState.messages` outside of `apply_mutations()`. Do not let tools or primitives write directly to the live transcript.
+Do not introduce code that directly mutates `ContextState.messages` outside of `apply_mutations()`. Do not let tools or primitives write directly to the live transcript. Also do not describe mutations as the source of all context: docstrings, template params, tool schemas, and initial history are separate compile inputs.
 
 ### SelfRef rules
 - `SelfReference` (`runtime/selfref/state.py`) is the durable backend — it stores history, experiences, summaries, and manages fork state.
 - `SelfRefSession` (`runtime/selfref/session.py`) is the invocation-scoped plugin that implements ReAct hooks (`collect_context_mutations`, `finalize`, etc.).
 - Keep pure context parsing/rendering in `runtime/selfref/context_ops.py`.
 - Keep stateful storage and mutation in `runtime/selfref/state.py`.
-- Keep `llm_chat` lifecycle bridging in `llm_decorator/selfref_sync.py`.
+- `LLMChat` is the stable callable agent instance bound into `SelfReference`; keep per-call mutable state inside invocation locals / `SelfRefSession`, not on shared instance fields.
+- `llm_decorator/selfref_sync.py` is a legacy compatibility shim; do not move new lifecycle logic there unless intentionally reviving that layer.
 - SelfRef can only affect the system through: source snapshot, pending intents → mutations, finalize side effects.
 - `runtime.selfref.fork.spawn(...)` children inherit the pre-fork context snapshot. Do not reintroduce the parent's pending assistant tool-call message into child-visible history.
 
@@ -153,6 +154,9 @@ Do not introduce code that directly mutates `ContextState.messages` outside of `
 - Do not add dual-mode (event/non-event) logic inside `react_loop.py`, `llm_call.py`, or `tool_scheduler.py`.
 
 ### Decorator rules
+- `@llm_function` returns `LLMFunction`; `@llm_chat` returns `LLMChat`. Preserve function-like metadata (`__wrapped__`, `__name__`, `__doc__`, `__annotations__`, `__signature__`) when changing them.
+- Do not reintroduce closure-only wrapper implementations for SelfRef binding; SelfRef should bind the stable `LLMChat` instance.
+- There is no `enable_event` or `return_mode` decorator parameter; `llm_chat` always yields `ReactOutput`, and `llm_function.stream(...)` yields `ReactOutput`.
 - Prefer `async def` for decorated public patterns and tool implementations.
 - Keep docstring-parsed contracts in sync with behavior. This matters for `@tool` and runtime primitives.
 - Runtime primitive docstrings must include `Best Practices`; registration fails without them.

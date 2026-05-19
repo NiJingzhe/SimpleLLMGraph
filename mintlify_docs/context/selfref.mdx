@@ -27,7 +27,7 @@ selfref.bind_history("agent_main", initial_history)
 ### SelfRefSession (invocation-scoped plugin)
 
 The per-call lifecycle adapter. Created fresh for each `@llm_chat` invocation. Implements ReAct hooks:
-- `collect_context_mutations()` — provides selfref-originated mutations before each compile
+- `collect_context_mutations()` — provides selfref-originated internal transcript patches before each compile
 - `finalize()` — persists final state back to the SelfReference backend after the turn ends
 
 The session bridges the gap between the stateless ReAct loop and the stateful backend.
@@ -42,7 +42,7 @@ The session bridges the gap between the stateless ReAct loop and the stateful ba
         │                                                │
         │  Before each compile:                          │
         │    → collect_context_mutations()               │
-        │    → may emit Experience/Summary mutations     │
+        │    → may emit Experience/Summary patches       │
         │                                                │
         │  After turn ends:                              │
         │    → finalize()                                │
@@ -89,9 +89,9 @@ When a `@llm_chat` agent has SelfRef enabled and uses `PyRepl`, these primitives
 | Primitive | What It Does |
 |-----------|-------------|
 | `runtime.selfref.context.inspect()` | Returns read-only snapshot: active key, experiences, summary, messages, has_pending_compaction |
-| `runtime.selfref.context.remember(text)` | Stores a durable experience → emits `ExperienceRememberMutation` |
-| `runtime.selfref.context.forget(experience_id)` | Removes an experience → emits `ExperienceForgetMutation` |
-| `runtime.selfref.context.compact(goal, instruction, discoveries, completed, current_status, likely_next_work, relevant_files_directories, remember=[])` | Queues context compaction → eventually emits `ContextSummaryMutation` |
+| `runtime.selfref.context.remember(text)` | Stores a durable experience through an internal experience patch |
+| `runtime.selfref.context.forget(experience_id)` | Removes an experience through an internal experience patch |
+| `runtime.selfref.context.compact(goal, instruction, discoveries, completed, current_status, likely_next_work, relevant_files_directories, remember=[])` | Queues context compaction → later applies an internal summary patch |
 
 ### Fork Primitives
 
@@ -114,7 +114,7 @@ System Prompt:
   </experiences>
 ```
 
-- `remember("...")` → adds an experience immediately (via mutation)
+- `remember("...")` → records an experience through the runtime patch boundary
 - `forget("exp_001")` → removes it
 - Experiences survive compaction — they're stored in the system prompt, not the working transcript
 - They're rendered by `render_system_prompt_with_experiences()` during compile Stage 2
@@ -139,7 +139,7 @@ payload = runtime.selfref.context.compact(
 
 What happens:
 1. Compaction is **queued** (not applied immediately)
-2. After the current tool batch completes, `ContextSummaryMutation` is applied
+2. After the current tool batch completes, the runtime applies a summary patch
 3. The system prompt is preserved
 4. Working transcript is replaced with the summary message
 5. Items in `remember` become durable experiences

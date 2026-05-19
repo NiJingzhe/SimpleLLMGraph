@@ -23,7 +23,6 @@ llm = OpenAICompatible.load_from_json_file(provider_json_path)["openrouter"][
 # 定义一个简单的 LLM 函数，用于文本摘要
 @llm_function(
     llm_interface=llm,
-    enable_event=True,  # 启用事件流
 )
 async def summarize_text(text: str) -> str:
     """

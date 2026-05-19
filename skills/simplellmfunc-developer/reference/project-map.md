@@ -20,7 +20,7 @@ Primary user entrypoints:
 
 - `llm_function_decorator.py`
 - `llm_chat_decorator.py`
-- `selfref_sync.py`
+- `selfref_sync.py` (legacy compatibility shim; active SelfRef session binding is in `LLMChat` + `runtime/selfref/session.py`) (legacy compatibility shim; active SelfRef session binding is in `LLMChat` + `runtime/selfref/session.py`)
 - `steps/common/`
 - `steps/function/`
 - `steps/chat/`
@@ -99,7 +99,7 @@ Support layers such as:
 ## How to navigate changes
 
 - Decorator behavior bug: start in `llm_decorator/`, then trace into `base/`.
-- `llm_chat` + selfref sync issue: start in `llm_decorator/selfref_sync.py`, then inspect `runtime/selfref/state.py` and the relevant decorator entrypoint.
+- `llm_chat` + selfref sync issue: start in `llm_chat_decorator.py` (`LLMChat`) and `runtime/selfref/session.py`, then inspect `runtime/selfref/state.py` and the relevant decorator entrypoint.
 - Tool schema or prompt-injection issue: start in `tool/tool.py` and `llm_decorator/utils/tools.py`.
 - Runtime primitive issue: start in `runtime/primitives.py`, then inspect `builtin/pyrepl.py` or the relevant builtin backend.
 - Selfref context parse/render issue: start in `runtime/selfref/context_ops.py` before changing stateful code.

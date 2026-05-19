@@ -10,7 +10,10 @@ from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
 from SimpleLLMFunc import llm_chat, llm_function
-from SimpleLLMFunc.base.compile_pipeline import CompiledTurnContext, compile_invocation_turn
+from SimpleLLMFunc.base.compile_pipeline import (
+    CompiledTurnContext,
+    compile_invocation_turn,
+)
 from SimpleLLMFunc.hooks.stream import ReactOutput
 from SimpleLLMFunc.llm_decorator.invocation_builder import (
     build_chat_invocation_spec,
@@ -43,7 +46,9 @@ def _completion(content: str) -> ChatCompletion:
 
 
 @pytest.mark.asyncio
-async def test_function_and_chat_specs_share_compile_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_function_and_chat_specs_share_compile_pipeline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Stage 2 target: both decorators' semantics compile through one boundary."""
 
     def fake_compile_invocation_turn(*args: Any, **kwargs: Any) -> CompiledTurnContext:
@@ -58,17 +63,23 @@ async def test_function_and_chat_specs_share_compile_pipeline(monkeypatch: pytes
 
     mock_llm = MagicMock()
     mock_llm.model_name = "test-model"
-    mock_llm.chat = AsyncMock(side_effect=[_completion("function done"), _completion("chat done")])
+    mock_llm.chat = AsyncMock(
+        side_effect=[_completion("function done"), _completion("chat done")]
+    )
 
-    with patch(
-        "SimpleLLMFunc.llm_decorator.llm_function_decorator.langfuse_client.start_as_current_observation",
-        return_value=_DummyObservation(),
-    ), patch(
-        "SimpleLLMFunc.llm_decorator.llm_chat_decorator.langfuse_client.start_as_current_observation",
-        return_value=_DummyObservation(),
-    ), patch(
-        "SimpleLLMFunc.base.react_loop.langfuse_client.start_as_current_observation",
-        return_value=_DummyObservation(),
+    with (
+        patch(
+            "SimpleLLMFunc.llm_decorator.llm_function_decorator.langfuse_client.start_as_current_observation",
+            return_value=_DummyObservation(),
+        ),
+        patch(
+            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.langfuse_client.start_as_current_observation",
+            return_value=_DummyObservation(),
+        ),
+        patch(
+            "SimpleLLMFunc.base.react_loop.langfuse_client.start_as_current_observation",
+            return_value=_DummyObservation(),
+        ),
     ):
 
         @llm_function(llm_interface=mock_llm)
@@ -109,12 +120,15 @@ async def test_llm_function_invocation_state_is_per_call_not_decorator_shared() 
 
     mock_llm.chat = AsyncMock(side_effect=chat_side_effect)
 
-    with patch(
-        "SimpleLLMFunc.llm_decorator.llm_function_decorator.langfuse_client.start_as_current_observation",
-        return_value=_DummyObservation(),
-    ), patch(
-        "SimpleLLMFunc.base.react_loop.langfuse_client.start_as_current_observation",
-        return_value=_DummyObservation(),
+    with (
+        patch(
+            "SimpleLLMFunc.llm_decorator.llm_function_decorator.langfuse_client.start_as_current_observation",
+            return_value=_DummyObservation(),
+        ),
+        patch(
+            "SimpleLLMFunc.base.react_loop.langfuse_client.start_as_current_observation",
+            return_value=_DummyObservation(),
+        ),
     ):
 
         @llm_function(llm_interface=mock_llm)
@@ -168,7 +182,6 @@ def test_invocation_builders_create_specs_not_provider_requests() -> None:
         template_params=chat_template_params,
         llm_kwargs={},
         stream=False,
-        return_mode="text",
         runtime_toolkit=None,
     )
 
@@ -214,7 +227,9 @@ def test_invocation_builder_does_not_import_steps_layer() -> None:
 
 
 @pytest.mark.asyncio
-async def test_event_stream_is_the_only_chat_runtime_surface_and_function_has_stream_accessor() -> None:
+async def test_event_stream_is_the_only_chat_runtime_surface_and_function_has_stream_accessor() -> (
+    None
+):
     """Chat is stream-only; llm_function returns values and exposes events via .stream."""
 
     from SimpleLLMFunc.base.react_loop import ReAct_loop
@@ -225,8 +240,13 @@ async def test_event_stream_is_the_only_chat_runtime_surface_and_function_has_st
     assert "enable_event" not in inspect.signature(ReAct_loop).parameters
     assert "enable_event" not in inspect.signature(llm_chat).parameters
     assert "enable_event" not in inspect.signature(llm_function).parameters
-    assert "enable_event" not in inspect.signature(build_chat_invocation_spec).parameters
-    assert "enable_event" not in inspect.signature(build_function_invocation_spec).parameters
+    assert (
+        "enable_event" not in inspect.signature(build_chat_invocation_spec).parameters
+    )
+    assert (
+        "enable_event"
+        not in inspect.signature(build_function_invocation_spec).parameters
+    )
     assert "enable_event" not in chat_module.__dict__
     assert "enable_event" not in function_module.__dict__
     assert "enable_event" not in inspect.getsource(chat_module.llm_chat)
@@ -236,15 +256,19 @@ async def test_event_stream_is_the_only_chat_runtime_surface_and_function_has_st
     mock_llm.model_name = "test-model"
     mock_llm.chat = AsyncMock(return_value=_completion("done"))
 
-    with patch(
-        "SimpleLLMFunc.llm_decorator.llm_function_decorator.langfuse_client.start_as_current_observation",
-        return_value=_DummyObservation(),
-    ), patch(
-        "SimpleLLMFunc.llm_decorator.llm_chat_decorator.langfuse_client.start_as_current_observation",
-        return_value=_DummyObservation(),
-    ), patch(
-        "SimpleLLMFunc.base.react_loop.langfuse_client.start_as_current_observation",
-        return_value=_DummyObservation(),
+    with (
+        patch(
+            "SimpleLLMFunc.llm_decorator.llm_function_decorator.langfuse_client.start_as_current_observation",
+            return_value=_DummyObservation(),
+        ),
+        patch(
+            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.langfuse_client.start_as_current_observation",
+            return_value=_DummyObservation(),
+        ),
+        patch(
+            "SimpleLLMFunc.base.react_loop.langfuse_client.start_as_current_observation",
+            return_value=_DummyObservation(),
+        ),
     ):
 
         @llm_function(llm_interface=mock_llm)

@@ -102,7 +102,7 @@ asyncio.run(main())
 1. User message "How do I install SimpleLLMFunc?" → compiled into LLM request
 2. LLM decides to call search_docs(query="install SimpleLLMFunc")
 3. Framework executes tool, gets result
-4. Result added to context via ToolResultMutation
+4. Result is applied to the transcript through an internal runtime patch
 5. Context re-compiled, sent back to LLM
 6. LLM generates final response using tool result
 7. Response streamed back as ReactOutput events

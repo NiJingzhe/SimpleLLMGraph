@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "SimpleLLMFunc"
-version = "0.7.8"
+version = "0.8.0"
 description = "A lightweight yet complete LLM/Agent application development framework. Provides decorators that use function docstrings as prompts, requiring no function body implementation while allowing you to benefit from function definitions and type annotations for higher development efficiency. Seamlessly integrate LLM capabilities into any Python project with minimal code."
 authors = ["Ni Jingzhe <nijingzhe@zju.edu.cn>"]
 readme = "README.md"

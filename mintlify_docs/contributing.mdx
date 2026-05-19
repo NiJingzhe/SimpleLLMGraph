@@ -56,7 +56,7 @@ SimpleLLMFunc/
 ## Key Rules
 
 - All decorated functions must be `async def`
-- Context changes must flow through mutations (never mutate messages directly)
+- Runtime side effects must flow through the internal patch boundary (never mutate live messages directly)
 - Runtime primitive docstrings must include `Best Practices`
 - Tests mirror source structure: `SimpleLLMFunc/base/react_loop.py` → `tests/test_base/test_react_loop.py`
 

@@ -39,9 +39,15 @@ from SimpleLLMFunc.runtime.selfref import (
     SelfReference,
 )
 from SimpleLLMFunc.hooks.events import ReActEventType, ReactEndEvent
-from SimpleLLMFunc.hooks.stream import EventOrigin, EventYield, ReactOutput, is_response_yield
+from SimpleLLMFunc.hooks.stream import (
+    EventOrigin,
+    EventYield,
+    ReactOutput,
+    is_response_yield,
+)
 from SimpleLLMFunc.llm_decorator.llm_chat_decorator import (
     DEFAULT_MAX_TOOL_CALLS,
+    LLMChat,
     llm_chat,
 )
 from SimpleLLMFunc.observability.langfuse_client import (
@@ -337,6 +343,10 @@ def test_llm_chat_binds_wrapped_agent_instance_to_self_reference() -> None:
         """test agent"""
 
     assert self_reference.get_agent_instance() is agent
+    assert isinstance(agent, LLMChat)
+    assert agent.self_reference is self_reference
+    assert agent.self_reference_key == "agent_main"
+    assert inspect.signature(agent) == inspect.signature(agent.__wrapped__)
 
 
 def test_llm_chat_default_max_tool_calls_is_none() -> None:
@@ -411,17 +421,6 @@ async def test_llm_chat_auto_resolves_builtin_self_reference_from_pyrepl() -> No
 
         yield "ok", kwargs["messages"]
 
-    async def passthrough_process_chat_response_stream(
-        response_stream: AsyncGenerator[tuple[str, list[dict[str, Any]]], None],
-        return_mode: str,
-        messages: list[dict[str, Any]],
-        func_name: str,
-        stream: bool,
-    ) -> AsyncGenerator[tuple[str, list[dict[str, Any]]], None]:
-        _ = (return_mode, messages, func_name, stream)
-        async for response, updated_history in response_stream:
-            yield response, updated_history
-
     mock_llm = MagicMock()
     mock_llm.model_name = "test-model"
 
@@ -457,8 +456,13 @@ async def test_llm_chat_auto_resolves_builtin_self_reference_from_pyrepl() -> No
     assert self_reference.list_history_keys() == ["agent"]
     assert repl.namespace.get("self_reference") is None
     assert captured_compile_source is not None
-    assert captured_compile_source.data_from_agent_config.base_system_prompt == "test agent"
-    assert captured_compile_source.data_from_agent_config.include_must_principles is True
+    assert (
+        captured_compile_source.data_from_agent_config.base_system_prompt
+        == "test agent"
+    )
+    assert (
+        captured_compile_source.data_from_agent_config.include_must_principles is True
+    )
     assert any(
         spec.get("name") == "execute_code"
         for spec in captured_compile_source.data_from_agent_config.tool_prompt_specs
@@ -490,17 +494,6 @@ async def test_llm_chat_auto_resolves_self_reference_from_pyrepl_backend() -> No
                 captured_system_prompt = maybe_prompt
 
         yield "ok", kwargs["messages"]
-
-    async def passthrough_process_chat_response_stream(
-        response_stream: AsyncGenerator[tuple[str, list[dict[str, Any]]], None],
-        return_mode: str,
-        messages: list[dict[str, Any]],
-        func_name: str,
-        stream: bool,
-    ) -> AsyncGenerator[tuple[str, list[dict[str, Any]]], None]:
-        _ = (return_mode, messages, func_name, stream)
-        async for response, updated_history in response_stream:
-            yield response, updated_history
 
     mock_llm = MagicMock()
     mock_llm.model_name = "test-model"
@@ -534,8 +527,13 @@ async def test_llm_chat_auto_resolves_self_reference_from_pyrepl_backend() -> No
     assert self_reference.get_agent_instance() is agent
     assert self_reference.list_history_keys() == ["agent"]
     assert captured_compile_source is not None
-    assert captured_compile_source.data_from_agent_config.base_system_prompt == "test agent"
-    assert captured_compile_source.data_from_agent_config.include_must_principles is True
+    assert (
+        captured_compile_source.data_from_agent_config.base_system_prompt
+        == "test agent"
+    )
+    assert (
+        captured_compile_source.data_from_agent_config.include_must_principles is True
+    )
     assert captured_system_prompt is not None
     assert captured_system_prompt == "test agent"
 
@@ -563,17 +561,6 @@ async def test_llm_chat_injects_active_selfref_key_for_runtime_context_ops() -> 
         assert "Execution succeeded" in execute_result
 
         yield "ok", kwargs["messages"]
-
-    async def passthrough_process_chat_response_stream(
-        response_stream: AsyncGenerator[tuple[str, list[dict[str, Any]]], None],
-        return_mode: str,
-        messages: list[dict[str, Any]],
-        func_name: str,
-        stream: bool,
-    ) -> AsyncGenerator[tuple[str, list[dict[str, Any]]], None]:
-        _ = (return_mode, messages, func_name, stream)
-        async for response, updated_history in response_stream:
-            yield response, updated_history
 
     mock_llm = MagicMock()
     mock_llm.model_name = "test-model"
@@ -652,7 +639,9 @@ async def test_llm_chat_runtime_context_forget_uses_mutation_only_path() -> None
 
     repl = PyRepl()
     self_reference = _builtin_self_reference(repl)
-    self_reference.bind_history("agent_main", [{"role": "user", "content": "seed-main"}])
+    self_reference.bind_history(
+        "agent_main", [{"role": "user", "content": "seed-main"}]
+    )
     self_reference.remember_experience("agent_main", "to-remove")
 
     with (
@@ -774,7 +763,9 @@ async def test_llm_chat_runtime_context_compact_rewrites_final_messages() -> Non
     assert stored_source.summary is not None
     assert stored_source.summary["goal"] == "Goal A"
     assert stored_source.summary_message is not None
-    assert "<context_compaction_summary>" in str(stored_source.summary_message["content"])
+    assert "<context_compaction_summary>" in str(
+        stored_source.summary_message["content"]
+    )
     assert stored_source.working_messages == [
         {"role": "assistant", "content": "done"},
     ]
@@ -1022,17 +1013,6 @@ async def test_llm_chat_fork_uses_isolated_pyrepl_session_toolkit() -> None:
         observed_toolkits.append(kwargs.get("toolkit"))
         yield "ok", kwargs["messages"]
 
-    async def passthrough_process_chat_response_stream(
-        response_stream: AsyncGenerator[tuple[str, list[dict[str, Any]]], None],
-        return_mode: str,
-        messages: list[dict[str, Any]],
-        func_name: str,
-        stream: bool,
-    ) -> AsyncGenerator[tuple[str, list[dict[str, Any]]], None]:
-        _ = (return_mode, messages, func_name, stream)
-        async for response, updated_history in response_stream:
-            yield response, updated_history
-
     mock_llm = MagicMock()
     mock_llm.model_name = "test-model"
     root_repl = PyRepl()
@@ -1089,17 +1069,6 @@ async def test_llm_chat_fork_clones_custom_pyrepl_pack_primitives() -> None:
         _ = args
         observed_toolkits.append(kwargs.get("toolkit"))
         yield "ok", kwargs["messages"]
-
-    async def passthrough_process_chat_response_stream(
-        response_stream: AsyncGenerator[tuple[str, list[dict[str, Any]]], None],
-        return_mode: str,
-        messages: list[dict[str, Any]],
-        func_name: str,
-        stream: bool,
-    ) -> AsyncGenerator[tuple[str, list[dict[str, Any]]], None]:
-        _ = (return_mode, messages, func_name, stream)
-        async for response, updated_history in response_stream:
-            yield response, updated_history
 
     mock_llm = MagicMock()
     mock_llm.model_name = "test-model"
@@ -1710,7 +1679,9 @@ async def test_llm_chat_event_mode_merges_self_reference_memory_mutations() -> N
 
 
 @pytest.mark.asyncio
-async def test_llm_chat_event_mode_preserves_protocol_tool_history_for_next_turn() -> None:
+async def test_llm_chat_event_mode_preserves_protocol_tool_history_for_next_turn() -> (
+    None
+):
     """Tool turns should persist assistant tool-call protocol messages for reuse."""
 
     mock_llm = MagicMock()
@@ -1746,7 +1717,9 @@ async def test_llm_chat_event_mode_preserves_protocol_tool_history_for_next_turn
             """test agent"""
 
         first_outputs: list[ReactOutput] = []
-        async for output in cast(AsyncGenerator[ReactOutput, None], agent("hello", history=history)):
+        async for output in cast(
+            AsyncGenerator[ReactOutput, None], agent("hello", history=history)
+        ):
             first_outputs.append(output)
 
         persisted_after_first = self_reference.snapshot_history("agent_main")
@@ -1763,7 +1736,9 @@ async def test_llm_chat_event_mode_preserves_protocol_tool_history_for_next_turn
         assert assistant_tool_message["content"] == "Let me check that."
 
         second_outputs: list[ReactOutput] = []
-        async for output in cast(AsyncGenerator[ReactOutput, None], agent("again", history=history)):
+        async for output in cast(
+            AsyncGenerator[ReactOutput, None], agent("again", history=history)
+        ):
             second_outputs.append(output)
 
     second_end = cast(EventYield, second_outputs[-1])
@@ -1921,17 +1896,6 @@ async def test_llm_chat_non_event_mode_merges_self_reference_memory_mutations() 
             ],
         )
 
-    async def passthrough_process_chat_response_stream(
-        response_stream: AsyncGenerator[tuple[str, list[dict[str, Any]]], None],
-        return_mode: str,
-        messages: list[dict[str, Any]],
-        func_name: str,
-        stream: bool,
-    ) -> AsyncGenerator[tuple[str, list[dict[str, Any]]], None]:
-        _ = (return_mode, messages, func_name, stream)
-        async for response, updated_history in response_stream:
-            yield response, updated_history
-
     mock_llm = MagicMock()
     mock_llm.model_name = "test-model"
 
@@ -2005,17 +1969,6 @@ async def test_llm_chat_uses_function_name_as_default_self_reference_key() -> No
 
         yield "ok", kwargs["messages"]
 
-    async def passthrough_process_chat_response_stream(
-        response_stream: AsyncGenerator[tuple[str, list[dict[str, Any]]], None],
-        return_mode: str,
-        messages: list[dict[str, Any]],
-        func_name: str,
-        stream: bool,
-    ) -> AsyncGenerator[tuple[str, list[dict[str, Any]]], None]:
-        _ = (return_mode, messages, func_name, stream)
-        async for response, updated_history in response_stream:
-            yield response, updated_history
-
     mock_llm = MagicMock()
     mock_llm.model_name = "test-model"
 
@@ -2045,8 +1998,13 @@ async def test_llm_chat_uses_function_name_as_default_self_reference_key() -> No
     assert self_reference.list_history_keys() == ["agent"]
     assert self_reference.snapshot_history("agent") == history
     assert captured_compile_source is not None
-    assert captured_compile_source.data_from_agent_config.base_system_prompt == "test agent"
-    assert captured_compile_source.data_from_agent_config.include_must_principles is True
+    assert (
+        captured_compile_source.data_from_agent_config.base_system_prompt
+        == "test agent"
+    )
+    assert (
+        captured_compile_source.data_from_agent_config.include_must_principles is True
+    )
     assert captured_system_prompt is not None
     assert captured_system_prompt == "test agent"
 
@@ -2089,17 +2047,6 @@ async def test_llm_chat_persists_runtime_system_prompt_across_turns() -> None:
             ],
         )
 
-    async def passthrough_process_chat_response_stream(
-        response_stream: AsyncGenerator[tuple[str, list[dict[str, Any]]], None],
-        return_mode: str,
-        messages: list[dict[str, Any]],
-        func_name: str,
-        stream: bool,
-    ) -> AsyncGenerator[tuple[str, list[dict[str, Any]]], None]:
-        _ = (return_mode, messages, func_name, stream)
-        async for response, updated_history in response_stream:
-            yield response, updated_history
-
     mock_llm = MagicMock()
     mock_llm.model_name = "test-model"
 
@@ -2141,10 +2088,19 @@ async def test_llm_chat_persists_runtime_system_prompt_across_turns() -> None:
     assert len(captured_compile_sources) == 2
     assert "docstring system" in observed_system_prompts[0]
     assert observed_system_prompts[1] == "runtime system"
-    assert captured_compile_sources[0].data_from_agent_config.base_system_prompt == "docstring system"
-    assert captured_compile_sources[1].data_from_agent_config.base_system_prompt == "docstring system"
+    assert (
+        captured_compile_sources[0].data_from_agent_config.base_system_prompt
+        == "docstring system"
+    )
+    assert (
+        captured_compile_sources[1].data_from_agent_config.base_system_prompt
+        == "docstring system"
+    )
     assert captured_compile_sources[1].data_from_selfref is not None
-    assert captured_compile_sources[1].data_from_selfref.base_system_prompt == "runtime system"
+    assert (
+        captured_compile_sources[1].data_from_selfref.base_system_prompt
+        == "runtime system"
+    )
     assert history[0] == {"role": "system", "content": "runtime system"}
     assert self_reference.snapshot_history("agent_main")[0] == {
         "role": "system",
@@ -2187,17 +2143,6 @@ async def test_append_system_prompt_persists_without_contract_pollution() -> Non
                 {"role": "assistant", "content": f"done-{call_count}"},
             ],
         )
-
-    async def passthrough_process_chat_response_stream(
-        response_stream: AsyncGenerator[tuple[str, list[dict[str, Any]]], None],
-        return_mode: str,
-        messages: list[dict[str, Any]],
-        func_name: str,
-        stream: bool,
-    ) -> AsyncGenerator[tuple[str, list[dict[str, Any]]], None]:
-        _ = (return_mode, messages, func_name, stream)
-        async for response, updated_history in response_stream:
-            yield response, updated_history
 
     mock_llm = MagicMock()
     mock_llm.model_name = "test-model"
@@ -2270,17 +2215,6 @@ async def test_llm_chat_deduplicates_runtime_primitive_contract_prompt() -> None
                 observed_system_prompts.append(maybe_prompt)
         yield "ok", messages
 
-    async def passthrough_process_chat_response_stream(
-        response_stream: AsyncGenerator[tuple[str, list[dict[str, Any]]], None],
-        return_mode: str,
-        messages: list[dict[str, Any]],
-        func_name: str,
-        stream: bool,
-    ) -> AsyncGenerator[tuple[str, list[dict[str, Any]]], None]:
-        _ = (return_mode, messages, func_name, stream)
-        async for response, updated_history in response_stream:
-            yield response, updated_history
-
     mock_llm = MagicMock()
     mock_llm.model_name = "test-model"
 
@@ -2323,7 +2257,10 @@ async def test_llm_chat_deduplicates_runtime_primitive_contract_prompt() -> None
     assert observed_system_prompts == ["docstring system", "docstring system"]
     for compile_source in captured_compile_sources:
         assert compile_source is not None
-        assert compile_source.data_from_agent_config.base_system_prompt == "docstring system"
+        assert (
+            compile_source.data_from_agent_config.base_system_prompt
+            == "docstring system"
+        )
         assert compile_source.data_from_agent_config.include_must_principles is True
         tool_specs = compile_source.data_from_agent_config.tool_prompt_specs
         assert len(tool_specs) >= 1
@@ -2351,17 +2288,6 @@ async def test_llm_chat_seeds_system_prompt_into_empty_self_reference_memory() -
         else:
             observed_first_roles.append(None)
         yield "ok", kwargs["messages"]
-
-    async def passthrough_process_chat_response_stream(
-        response_stream: AsyncGenerator[tuple[str, list[dict[str, Any]]], None],
-        return_mode: str,
-        messages: list[dict[str, Any]],
-        func_name: str,
-        stream: bool,
-    ) -> AsyncGenerator[tuple[str, list[dict[str, Any]]], None]:
-        _ = (return_mode, messages, func_name, stream)
-        async for response, updated_history in response_stream:
-            yield response, updated_history
 
     mock_llm = MagicMock()
     mock_llm.model_name = "test-model"
@@ -2413,17 +2339,6 @@ async def test_llm_chat_renders_docstring_template_params_into_system_prompt() -
                 captured_system_prompt = maybe_prompt
 
         yield "ok", messages
-
-    async def passthrough_process_chat_response_stream(
-        response_stream: AsyncGenerator[tuple[str, list[dict[str, Any]]], None],
-        return_mode: str,
-        messages: list[dict[str, Any]],
-        func_name: str,
-        stream: bool,
-    ) -> AsyncGenerator[tuple[str, list[dict[str, Any]]], None]:
-        _ = (return_mode, messages, func_name, stream)
-        async for response, updated_history in response_stream:
-            yield response, updated_history
 
     mock_llm = MagicMock()
     mock_llm.model_name = "test-model"
