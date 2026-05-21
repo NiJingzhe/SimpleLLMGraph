@@ -17,6 +17,22 @@ The stateful storage layer. Lives across invocations. Holds:
 - **Summaries** — compaction checkpoints
 - **Fork state** — child agent handles and results
 
+Since 0.8.1, `SelfReference` is implemented as a small public facade over focused internal components:
+
+| Module | Responsibility |
+|--------|----------------|
+| `state.py` | Public facade, lifecycle, compatibility exports |
+| `store.py` | Durable history/source storage |
+| `active_turn.py` | Active memory key, fork context, runtime toolkit, template params, active ReAct state |
+| `mutations.py` | Pending compaction/context/destructive mutation queues |
+| `memory_api.py` | `self_reference.memory[...]` proxy and handle API |
+| `context_memory.py` | Context snapshots, experience CRUD, compaction commit, direct memory editing |
+| `agent_binding.py` | Bound recursive agent callable state |
+| `fork_manager.py` | Fork/spawn/gather lifecycle and result materialization |
+| `fork_utils.py` | Fork helper functions and compatibility constants |
+
+This split does not change the public `SelfReference` API; it makes the durable backend easier to maintain and reason about.
+
 ```python
 from SimpleLLMFunc.builtin import SelfReference
 

@@ -18,6 +18,7 @@
   - [框架设计原则](#框架设计原则)
     - [核心设计理念](#核心设计理念)
     - [架构分层](#架构分层)
+    - [核心上下文规则](#核心上下文规则)
   - [开发规范](#开发规范)
     - [代码组织](#代码组织)
     - [命名规范](#命名规范)
@@ -27,6 +28,7 @@
     - [LLM Chat 模式](#llm-chat-模式)
     - [Tool 定义模式](#tool-定义模式)
     - [Event Stream 模式](#event-stream-模式)
+    - [SelfRef / Runtime Primitive 模式](#selfref--runtime-primitive-模式)
   - [事件系统最佳实践](#事件系统最佳实践)
     - [内置事件类型](#内置事件类型)
     - [自定义事件发射](#自定义事件发射)
@@ -84,16 +86,29 @@ SimpleLLMFunc 遵循以下核心设计理念：
 
 1. **LLM as Function**: 将 LLM 调用视为普通 Python 函数调用，降低使用门槛
 2. **Prompt as Code**: Prompt 直接写在函数 DocString 中，与代码共存
-3. **Code as Doc**: 函数定义本身就是完整文档，享受 IDE 类型提示
+3. **Context-Centric**: 上下文是单一事实源；运行时变化通过结构化 `ContextMutation` 在编译边界生效
 
 ### 架构分层
 
 框架采用分层架构：
 
-- **装饰器层**: @llm_function, @llm_chat, @tool 装饰器
-- **执行层**: ReAct 循环实现，工具调用编排
-- **接口层**: LLM 接口抽象，支持多提供商
-- **基础设施层**: 日志、事件流、可观测性
+- **装饰器层**: @llm_function、@llm_chat、@tool；从 Python 函数调用构建 `InvocationSpec`
+- **编译边界层**: `compile_pipeline.py` / `context_compile.py`；应用 `ContextMutation` 并渲染 LLM 可见消息
+- **ReAct Runtime 层**: `react_loop.py` event-only 主循环；编排 LLM phase、工具批次、hooks 与 finalize
+- **Runtime / Builtin 层**: runtime primitive、SelfRef、PyRepl、FileToolset
+- **接口层**: LLM Provider 适配器，支持 OpenAI-compatible 与 Responses-compatible 实现
+- **基础设施层**: 事件流、日志、Langfuse 可观测性、TUI
+
+### 核心上下文规则
+
+所有 ReAct turn 内的上下文变化必须经过编译边界：
+
+1. LLM 调用、工具执行、SelfRef hooks、abort 等生产 `ContextMutation`
+2. `react_loop.py` 在下一次 compile boundary 前收集 pending mutations
+3. `compile_context()` / `apply_mutations()` 按顺序应用 mutation
+4. `compile_invocation_turn()` 生成最终 provider-facing messages
+
+不要在 ReAct 主循环中直接修改 live transcript。SelfRef 在 active turn 内也应通过 pending intent -> `ContextMutation` 的路径影响模型可见上下文。
 
 ## 开发规范
 
@@ -126,15 +141,19 @@ SimpleLLMFunc 遵循以下核心设计理念：
 
 - 使用 @llm_function 装饰器
 - 函数体为空，Prompt 写在 DocString
-- 支持工具调用和多轮对话
+- 普通调用 `await func(...)` 返回 typed result
+- 如需观察事件流，使用 `async for output in func.stream(...): ...`
+- 支持工具调用；最终响应会按返回类型做后处理
 
 ### LLM Chat 模式
 
-适用于对话场景：
+适用于对话与 Agent 场景：
 
 - 使用 @llm_chat 装饰器
-- 支持多轮上下文
-- 可注入消息历史
+- `@llm_chat` 调用结果是 `AsyncGenerator[ReactOutput, None]`
+- 支持多轮上下文，可通过 `history` / `chat_history` 参数注入消息历史
+- chat runtime surface 已统一为事件流；不要使用已废弃的 `return_mode` 或 `enable_event` 设计
+- 当启用 SelfRef 时，decorated callable instance 提供稳定 agent identity，便于 fork 和 durable memory 绑定
 
 ### Tool 定义模式
 
@@ -148,9 +167,20 @@ SimpleLLMFunc 遵循以下核心设计理念：
 
 观察 LLM 调用过程：
 
-- 设置 enable_event=True
-- 遍历 yield 输出
-- 根据事件类型处理
+- 核心 ReAct runtime 始终是 event-only，不存在 `enable_event=True/False` 双模式
+- `@llm_chat` 直接产出 `ReactOutput`；`@llm_function` 通过 `.stream(...)` 产出 `ReactOutput`
+- `ReactOutput` 是 `ResponseYield | EventYield`
+- 使用 `is_response_yield()` / `is_event_yield()` 或 `responses_only()` / `events_only()` 过滤输出
+- 根据 `output.event.event_type` 处理 LLM 调用、工具调用、ReAct lifecycle、自定义事件等
+
+### SelfRef / Runtime Primitive 模式
+
+适用于带持久上下文、自我压缩、fork 子任务的 Agent：
+
+- `SelfReference` 是 durable backend 的 public facade；`SelfRefSession` 是 invocation-scoped ReAct hook/plugin
+- PyRepl 内安装 runtime primitive 后，模型通过 `execute_code` 中的 `runtime.namespace.name(...)` 调用 primitive
+- Runtime primitive 不是原生 LLM tool call；它是 worker 内的 host-registered callable
+- active ReAct turn 内的 remember / forget / compact 应通过 pending intent 转为 `ContextMutation`，在下一次 compile boundary 生效
 
 ## 事件系统最佳实践
 
@@ -158,17 +188,18 @@ SimpleLLMFunc 遵循以下核心设计理念：
 
 框架提供丰富的内置事件：
 
-- LLM 调用相关: LLM_CALL_START, LLM_CALL_END, LLM_CHUNK_ARRIVE
-- 工具调用相关: TOOL_CALL_START, TOOL_CALL_END, TOOL_CALL_ERROR
-- ReAct 循环相关: REACT_START, REACT_ITERATION_START, REACT_END
+- LLM 调用相关: `LLM_CALL_START`, `LLM_CALL_END`, `LLM_CHUNK_ARRIVE`
+- 工具调用相关: `TOOL_CALLS_BATCH_START`, `TOOL_CALL_START`, `TOOL_CALL_ARGUMENTS_DELTA`, `TOOL_CALL_END`, `TOOL_CALL_ERROR`, `TOOL_CALLS_BATCH_END`
+- ReAct 循环相关: `REACT_START`, `REACT_ITERATION_START`, `REACT_ITERATION_END`, `REACT_END`
+- 自定义事件: `CUSTOM_EVENT`
 
 ### 自定义事件发射
 
 在 Tool 中发射自定义事件：
 
-- 声明 event_emitter 参数
-- 使用 emit() 方法发射事件
-- 事件会自动汇入 Event Stream
+- 声明 `event_emitter` 参数
+- 使用 `await event_emitter.emit(event_name, data)` 发射事件
+- 自定义事件会汇入统一 Event Stream，并携带 `EventOrigin` 元数据
 
 ## 开发流程
 
@@ -202,7 +233,7 @@ SimpleLLMFunc 遵循以下核心设计理念：
 ### 常见问题排查
 
 - Tool 参数检查问题: 检查 Tool 对象的 parameters 列表
-- 事件不显示问题: 检查 event_emitter 是否正确传递
+- 事件不显示问题: 确认消费的是 `ReactOutput` event stream，并检查 `event_emitter` 是否正确传递
 - 类型错误: 检查类型标注是否正确
 
 ### 日志使用

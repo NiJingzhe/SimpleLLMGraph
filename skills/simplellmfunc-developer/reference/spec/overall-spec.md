@@ -195,9 +195,10 @@ SimpleLLMFunc 遵循以下核心设计理念：
 
 ### ReAct / selfref 维护约束
 
-- `base/ReAct.py` 中的新终态分支应复用统一 finalize 路径，避免绕过 `before_finalize`
+- `base/react_loop.py` 中的新终态分支应复用统一 finalize 路径，避免绕过 `before_finalize`；`base/ReAct.py` 只保留兼容入口
 - selfref 相关纯 context transform 优先放在 `runtime/selfref/context_ops.py`
-- `runtime/selfref/state.py` 负责有状态存储与 mutation，不要把纯 parse/render 逻辑重新塞回去
+- `runtime/selfref/state.py` 是 SelfReference public facade，不要把 context memory、fork lifecycle、store、mutation queues 重新塞回去
+- 有状态 selfref 逻辑按职责放入 `store.py`、`active_turn.py`、`mutations.py`、`context_memory.py`、`fork_manager.py`、`agent_binding.py`
 - `LLMChat` callable instance 与 `SelfRefSession` 负责 `llm_chat` 和 `SelfReference` 的生命周期桥接；`selfref_sync.py` 仅为 legacy compatibility shim
 - Provider-specific API 差异优先留在 `interface/` 适配层；例如 Responses API 的 `instructions`、reasoning、stream chunk 适配，不要直接塞进 `ReAct`
 - selfref fork child 的可见上下文应来自 pre-fork 快照，不要把父 agent 当前 pending `tool_calls` message 重新带回 child history

@@ -49,7 +49,7 @@ This document summarizes the current runtime primitive authoring and registratio
 ### Related Files
 - This document: `spec/primitive-dev-api-plan.md`
 - Related spec: `spec/meta.md`
-- Related code: `SimpleLLMFunc/runtime/primitives.py`, `SimpleLLMFunc/builtin/pyrepl.py`, `SimpleLLMFunc/runtime/builtin_self_reference.py`, `SimpleLLMFunc/llm_decorator/llm_chat_decorator.py`
+- Related code: `SimpleLLMFunc/runtime/primitives.py`, `SimpleLLMFunc/builtin/pyrepl_primitive_host.py`, `SimpleLLMFunc/runtime/selfref/primitives.py`, `SimpleLLMFunc/llm_decorator/llm_chat_decorator.py`
 - Related docs: `mintlify_docs/pyrepl.mdx`, `mintlify_docs/detailed_guide/llm_chat.mdx`
 <!-- DOC_META_END -->
 
@@ -459,7 +459,7 @@ Update docs, examples, and tests:
 Recommended implementation order for this branch:
 
 1. Add new core types in `SimpleLLMFunc/runtime/primitives.py`.
-2. Add pack installation tracking to `SimpleLLMFunc/builtin/pyrepl.py`.
+2. Add pack installation tracking to `SimpleLLMFunc/builtin/pyrepl_primitive_host.py`.
 3. Update `PrimitiveCallContext` and registry call plumbing to expose backend access.
 4. Refactor builtin selfref pack onto the new internal pack model.
 5. Update `SimpleLLMFunc/llm_decorator/llm_chat_decorator.py` clone logic to clone installed packs.

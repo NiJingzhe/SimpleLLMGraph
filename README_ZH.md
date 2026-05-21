@@ -21,9 +21,9 @@
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/NiJingzhe/SimpleLLMFunc/graphs/commit-activity)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/NiJingzhe/SimpleLLMFunc/pulls)
 
-### 更新说明 (0.8.0)
+### 更新说明 (0.8.1)
 
-**装饰器 callable instance 化**：`@llm_function` 现在返回 `LLMFunction`，`@llm_chat` 返回 `LLMChat`，保留正常调用方式，同时为 SelfRef 提供稳定的 agent identity。**统一 chat 事件输出面**：移除过时的 `llm_chat(return_mode=...)`；chat 调用现在直接产出 `ReactOutput`。**Provider 默认参数**：`OpenAICompatible` 支持在 `provider.json` 中配置每模型 `api_params`。详情见 **[更新日志](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/CHANGELOG.md)**。
+**架构清理版本**：Public API 保持稳定，同时继续拆分 PyRepl、SelfRef 与 `llm_chat` 内部模块。**PyRepl** 现在是更薄的 facade，worker 生命周期、primitive host、execute/reset 编排、audit、tools、input bridge 分别由独立组件承载。**SelfRef** 现在拆分为 durable store、active turn、mutation queues、context memory、fork manager 与 agent binding。该重构已通过完整测试套件。详情见 **[更新日志](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/CHANGELOG.md)**。
 
 ### 文档
 
@@ -200,7 +200,11 @@ SelfRef 让 Agent 在运行时**读写并编辑自身上下文**，同时遵守 
 SimpleLLMFunc/
 ├── llm_decorator/             # L1: 装饰器层
 │   ├── llm_function_decorator.py  # @llm_function — 无状态 LLM → 类型化结果
-│   ├── llm_chat_decorator.py      # @llm_chat — 有状态 Agent → ReactOutput 流
+│   ├── llm_chat_decorator.py      # @llm_chat public facade / LLMChat callable
+│   ├── chat_call_context.py       # 绑定参数/template/runtime 调用上下文
+│   ├── chat_selfref.py            # SelfRef 绑定/收尾辅助逻辑
+│   ├── chat_toolkit.py            # Runtime toolkit 与 fork toolkit 辅助逻辑
+│   ├── chat_types.py              # 共享装饰器常量/类型
 │   ├── invocation_spec.py         # InvocationSpec / PromptContract / TranscriptSeed
 │   ├── invocation_builder.py      # function/chat 模式的 Spec 构建
 │   ├── prompt_contract.py         # Prompt 模板 + XML Schema 生成
@@ -229,17 +233,33 @@ SimpleLLMFunc/
 │
 ├── tool/                      # @tool 装饰器 + Tool 基类
 ├── builtin/                   # 内置工具
-│   ├── pyrepl.py                  # 持久 IPython REPL
-│   └── self_reference.py          # SelfReference 记忆/Fork 后端
+│   ├── pyrepl.py                  # PyRepl public facade
+│   ├── pyrepl_execution.py        # execute/reset 编排
+│   ├── pyrepl_worker_client.py    # 子进程 + queue 生命周期
+│   ├── pyrepl_worker_mixin.py     # facade 兼容 worker wrapper
+│   ├── pyrepl_primitive_host.py   # runtime primitive host / backend bridge
+│   ├── pyrepl_tools.py            # execute_code/reset_repl tool factory
+│   ├── pyrepl_audit.py            # audit log writer
+│   ├── pyrepl_input_bridge.py     # process-wide input bridge
+│   ├── pyrepl_input_mixin.py      # PyRepl input submission API
+│   └── file_tools.py              # workspace-scoped 文件工具
 │
 ├── runtime/                   # Runtime Primitive 体系
 │   ├── primitives.py              # PrimitiveRegistry / PrimitivePack / @primitive()
 │   ├── worker_proxy.py            # WorkerRuntimeProxy（runtime.selfref.*）
 │   └── selfref/
-│       ├── state.py               # SelfReference（持久后端）
+│       ├── state.py               # SelfReference public facade
+│       ├── store.py               # durable history/source store
+│       ├── active_turn.py         # active memory/fork/toolkit/template contextvars
+│       ├── mutations.py           # pending compaction/context mutation queues
+│       ├── memory_api.py          # self_reference.memory[...] proxy/handle
+│       ├── context_memory.py      # context memory、experiences、compaction、direct edits
+│       ├── agent_binding.py       # 绑定 recursive agent callable 状态
+│       ├── fork_manager.py        # fork/spawn/gather 生命周期
+│       ├── fork_utils.py          # fork helper functions/constants
 │       ├── session.py             # SelfRefSession（调用级插件）
 │       ├── context_ops.py         # 上下文 解析 / 构建 / 规范化
-│       └── primitives.py          # 8 个 selfref 原语
+│       └── primitives.py          # selfref runtime primitives
 │
 ├── hooks/                     # 事件流系统
 │   ├── events.py                  # 14 种 ReActEvent 子类型
@@ -615,7 +635,7 @@ LANGFUSE_EXPORT_ALL_SPANS=true
   month = {February},
   title = {{SimpleLLMFunc: A New Approach to Build LLM Applications}},
   url = {https://github.com/NiJingzhe/SimpleLLMFunc},
-  version = {0.8.0},
+  version = {0.8.1},
   year = {2026}
 }
 ```

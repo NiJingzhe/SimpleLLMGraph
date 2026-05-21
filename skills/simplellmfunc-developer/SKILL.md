@@ -5,7 +5,7 @@ license: MIT
 compatibility: "Python 3.12+ repo with pytest, Poetry, Mintlify docs, and SimpleLLMFunc source tree available."
 metadata:
   project: SimpleLLMFunc
-  version: "0.8.0"
+  version: "0.8.1"
 ---
 
 # SimpleLLMFunc Framework Development
@@ -84,14 +84,29 @@ Message and tool sub-modules:
 ### Runtime Primitive System (`runtime/`)
 - `primitives.py`: `PrimitiveRegistry`, `PrimitivePack`, `PrimitiveCallContext`, `@primitive()`
 - `worker_proxy.py`: `WorkerRuntimeProxy`, `WorkerRuntimeNamespace`, `PrimitiveTransport`
-- `selfref/state.py`: `SelfReference` — durable backend (history store, context editing, fork)
+- `selfref/state.py`: `SelfReference` public facade, lifecycle, compatibility exports
+- `selfref/store.py`: durable history/source store
+- `selfref/active_turn.py`: active memory key, fork context, runtime toolkit, template params, active ReAct state contextvars
+- `selfref/mutations.py`: pending compaction/context/destructive mutation queues
+- `selfref/memory_api.py`: `self_reference.memory[...]` proxy/handle API
+- `selfref/context_memory.py`: context snapshots, experience CRUD, compaction commit, direct memory editing API
+- `selfref/agent_binding.py`: recursive agent callable binding state
+- `selfref/fork_manager.py`: fork/spawn/gather lifecycle and result materialization
+- `selfref/fork_utils.py`: fork helper functions and compatibility constants
 - `selfref/session.py`: `SelfRefSession` — invocation-scoped plugin implementing ReAct hooks
 - `selfref/context_ops.py`: `parse_context_messages()`, `build_context_messages_from_state_data()`, `canonicalize_context_messages()`
-- `selfref/primitives.py`: 8 selfref primitives (guide, context.inspect/remember/forget/compact, fork.is_bound/spawn/gather_all)
+- `selfref/primitives.py`: selfref primitives (guide, context.inspect/remember/forget/compact, fork.is_bound/spawn/gather_all)
 
 ### Built-in Tools (`builtin/`)
-- `pyrepl.py`: `PyRepl` — persistent IPython REPL with primitive pack support
-- `self_reference.py`: `SelfReference` memory/fork backend
+- `pyrepl.py`: `PyRepl` public facade
+- `pyrepl_execution.py`: execute/reset worker protocol orchestration
+- `pyrepl_worker_client.py`: subprocess and multiprocessing queue lifecycle
+- `pyrepl_worker_mixin.py`: facade-compatible worker lifecycle wrappers
+- `pyrepl_primitive_host.py`: runtime backend, primitive registry, primitive RPC, fork clone integration
+- `pyrepl_tools.py`: execute/reset tool creation and output formatting
+- `pyrepl_audit.py`: audit log writer
+- `pyrepl_input_bridge.py`: process-wide input request/reply bridge
+- `pyrepl_input_mixin.py`: PyRepl input submission API
 - `file_tools.py`: `FileToolset` — workspace-scoped file tools with stale-write protection
 
 ### Event Stream (`hooks/`)
@@ -137,10 +152,14 @@ LLM-visible messages are compiled from invocation config, a base transcript/hist
 Do not introduce code that directly mutates `ContextState.messages` outside of `apply_mutations()`. Do not let tools or primitives write directly to the live transcript. Also do not describe mutations as the source of all context: docstrings, template params, tool schemas, and initial history are separate compile inputs.
 
 ### SelfRef rules
-- `SelfReference` (`runtime/selfref/state.py`) is the durable backend — it stores history, experiences, summaries, and manages fork state.
+- `SelfReference` (`runtime/selfref/state.py`) is the public facade for the durable backend; do not re-expand it into a god object.
 - `SelfRefSession` (`runtime/selfref/session.py`) is the invocation-scoped plugin that implements ReAct hooks (`collect_context_mutations`, `finalize`, etc.).
 - Keep pure context parsing/rendering in `runtime/selfref/context_ops.py`.
-- Keep stateful storage and mutation in `runtime/selfref/state.py`.
+- Keep durable history/source storage in `runtime/selfref/store.py`.
+- Keep active turn contextvars and active ReAct state lookup in `runtime/selfref/active_turn.py`.
+- Keep pending mutation/compaction queues in `runtime/selfref/mutations.py`.
+- Keep context memory operations, experience CRUD, compaction commit, and direct memory editing in `runtime/selfref/context_memory.py`.
+- Keep fork/spawn/gather lifecycle behavior in `runtime/selfref/fork_manager.py` and pure-ish helpers/constants in `runtime/selfref/fork_utils.py`.
 - `LLMChat` is the stable callable agent instance bound into `SelfReference`; keep per-call mutable state inside invocation locals / `SelfRefSession`, not on shared instance fields.
 - `llm_decorator/selfref_sync.py` is a legacy compatibility shim; do not move new lifecycle logic there unless intentionally reviving that layer.
 - SelfRef can only affect the system through: source snapshot, pending intents → mutations, finalize side effects.

@@ -1,5 +1,34 @@
 # Change log for SimpleLLMFunc
 
+## 0.8.1 (2026-05-20) - Architecture Split: PyRepl, SelfRef, and Chat Decorator Internals
+
+### 🔧 Improvements
+
+1. **PyRepl facade split**:
+   - Slimmed `builtin/pyrepl.py` into a public facade while preserving `PyRepl` behavior and compatibility wrappers.
+   - Extracted worker lifecycle, execute/reset orchestration, primitive host integration, tool creation, audit logging, input bridging, and worker alias compatibility into focused modules.
+   - Kept `execute_code`, `reset_repl`, runtime primitive calls, subprocess cleanup, input handling, and timeout behavior stable.
+
+2. **SelfReference component split**:
+   - Reduced `runtime/selfref/state.py` to a facade/lifecycle module.
+   - Extracted durable store, active turn contextvars, mutation queues, memory proxy API, context memory/editing, agent binding, fork lifecycle, and fork helper logic into dedicated modules.
+   - Preserved public APIs such as `SelfReference.memory`, `SelfReference.instance`, `bind_history`, context compaction, and `runtime.selfref.fork.spawn/gather_all`.
+
+3. **`llm_chat` internal split**:
+   - Split chat decorator support code into call-context, toolkit, selfref, and shared-type helper modules.
+   - Preserved `LLMChat`, `ReAct_loop` patch points, runtime toolkit override behavior, and SelfRef finalization semantics.
+
+### 📚 Documentation & Skills
+
+1. **Architecture map refresh**:
+   - Updated README/README_ZH project maps, `spec/project-map.md`, and packaged developer skill guidance to describe the current module boundaries.
+   - Added the new PyRepl and SelfRef component files to architecture documentation.
+
+### 🧪 Testing
+
+- Verified the full test suite after the refactor: `661 passed`.
+- Re-ran focused PyRepl, SelfRef, llm_chat, runtime-toolkit, stage2 invocation, and ReAct core suites during the split.
+
 ## 0.8.0 (2026-05-19) - Callable Decorators, Unified Chat Events, and Provider Defaults
 
 ### ✨ New Features

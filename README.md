@@ -21,9 +21,9 @@
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/NiJingzhe/SimpleLLMFunc/graphs/commit-activity)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/NiJingzhe/SimpleLLMFunc/pulls)
 
-### Update Notes (0.8.0)
+### Update Notes (0.8.1)
 
-**Callable decorator instances**: `@llm_function` now returns `LLMFunction` and `@llm_chat` returns `LLMChat`, preserving normal call behavior while giving SelfRef a stable agent identity. **Unified chat event surface**: removed obsolete `llm_chat(return_mode=...)`; chat calls now yield `ReactOutput` directly. **Provider defaults**: `OpenAICompatible` supports per-model `api_params` in `provider.json`. See **[CHANGELOG](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/CHANGELOG.md)** for details.
+**Architecture cleanup release**: the public APIs stay stable, while PyRepl, SelfRef, and `llm_chat` internals have been split into smaller facade/component modules. **PyRepl** is now a thin facade over worker lifecycle, primitive host, execution, audit, tools, and input bridge components. **SelfRef** now separates durable store, active turn state, mutation queues, context memory, fork management, and agent binding. The full test suite passes with these refactors. See **[CHANGELOG](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/CHANGELOG.md)** for details.
 
 ### Documentation
 
@@ -200,7 +200,11 @@ All changes take effect at the next compile boundary — SelfRef cannot bypass c
 SimpleLLMFunc/
 ├── llm_decorator/             # L1: Decorator layer
 │   ├── llm_function_decorator.py  # @llm_function — stateless LLM → typed result
-│   ├── llm_chat_decorator.py      # @llm_chat — stateful agent → ReactOutput stream
+│   ├── llm_chat_decorator.py      # @llm_chat public facade / LLMChat callable
+│   ├── chat_call_context.py       # Bound args/template/runtime call context
+│   ├── chat_selfref.py            # SelfRef binding/finalization helpers
+│   ├── chat_toolkit.py            # Runtime toolkit and fork toolkit helpers
+│   ├── chat_types.py              # Shared decorator constants/types
 │   ├── invocation_spec.py         # InvocationSpec / PromptContract / TranscriptSeed
 │   ├── invocation_builder.py      # Spec builders for function/chat modes
 │   ├── prompt_contract.py         # Prompt templates + XML Schema generation
@@ -229,17 +233,33 @@ SimpleLLMFunc/
 │
 ├── tool/                      # @tool decorator + Tool base class
 ├── builtin/                   # Built-in tools
-│   ├── pyrepl.py                  # Persistent IPython REPL
-│   └── self_reference.py          # SelfReference memory/fork backend
+│   ├── pyrepl.py                  # PyRepl public facade
+│   ├── pyrepl_execution.py        # execute/reset orchestration
+│   ├── pyrepl_worker_client.py    # subprocess + queue lifecycle
+│   ├── pyrepl_worker_mixin.py     # facade-compatible worker wrappers
+│   ├── pyrepl_primitive_host.py   # runtime primitive host / backend bridge
+│   ├── pyrepl_tools.py            # execute_code/reset_repl tool factory
+│   ├── pyrepl_audit.py            # audit log writer
+│   ├── pyrepl_input_bridge.py     # process-wide input bridge
+│   ├── pyrepl_input_mixin.py      # PyRepl input submission API
+│   └── file_tools.py              # Workspace-scoped file tools
 │
 ├── runtime/                   # Runtime primitive system
 │   ├── primitives.py              # PrimitiveRegistry / PrimitivePack / @primitive()
 │   ├── worker_proxy.py            # WorkerRuntimeProxy (runtime.selfref.*)
 │   └── selfref/
-│       ├── state.py               # SelfReference (durable backend)
+│       ├── state.py               # SelfReference public facade
+│       ├── store.py               # Durable history/source store
+│       ├── active_turn.py         # Active memory/fork/toolkit/template contextvars
+│       ├── mutations.py           # Pending compaction/context mutation queues
+│       ├── memory_api.py          # self_reference.memory[...] proxy/handle
+│       ├── context_memory.py      # Context memory, experiences, compaction, direct edits
+│       ├── agent_binding.py       # Bound recursive agent callable state
+│       ├── fork_manager.py        # Fork/spawn/gather lifecycle
+│       ├── fork_utils.py          # Fork helper functions/constants
 │       ├── session.py             # SelfRefSession (invocation-scoped plugin)
 │       ├── context_ops.py         # Context parse / build / canonicalize
-│       └── primitives.py          # 8 selfref primitives
+│       └── primitives.py          # selfref runtime primitives
 │
 ├── hooks/                     # Event stream system
 │   ├── events.py                  # 14 ReActEvent subtypes
@@ -616,7 +636,7 @@ LANGFUSE_EXPORT_ALL_SPANS=true
   month = {February},
   title = {{SimpleLLMFunc: A New Approach to Build LLM Applications}},
   url = {https://github.com/NiJingzhe/SimpleLLMFunc},
-  version = {0.8.0},
+  version = {0.8.1},
   year = {2026}
 }
 ```

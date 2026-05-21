@@ -224,14 +224,27 @@ SimpleLLMFunc/
 **架构特点**:
 
 - `runtime/primitives.py` 负责 primitive registry 与契约
+- `runtime/selfref/state.py` 是 SelfReference public facade，保留兼容 API 并编排子组件
+- `runtime/selfref/store.py` 负责 durable history/source store
+- `runtime/selfref/active_turn.py` 负责 active memory/fork/toolkit/template contextvars 与 active ReAct state lookup
+- `runtime/selfref/mutations.py` 负责 pending compaction/context/destructive mutation queues
+- `runtime/selfref/context_memory.py` 负责 context snapshots、experience CRUD、compaction commit 与 direct memory editing
+- `runtime/selfref/fork_manager.py` 负责 fork/spawn/gather 生命周期与结果物化
 - `runtime/selfref/context_ops.py` 负责纯函数：context parse/render/canonicalize
-- `runtime/selfref/state.py` 负责有状态存储、history 验证、compaction queue 与 fork 行为，包括 child fork 的 pre-fork 上下文构建与 fork 结果物化
 
 **子模块**:
 
 - `primitives.py`: runtime primitive registry 与 pack 相关能力
+- `selfref/state.py`: SelfReference public facade / lifecycle / compatibility
+- `selfref/store.py`: durable history/source store
+- `selfref/active_turn.py`: active turn contextvars
+- `selfref/mutations.py`: pending mutation queues
+- `selfref/memory_api.py`: memory proxy/handle API
+- `selfref/context_memory.py`: context memory、experience、compaction、direct editing
+- `selfref/agent_binding.py`: recursive agent callable binding
+- `selfref/fork_manager.py`: fork/spawn/gather lifecycle
+- `selfref/fork_utils.py`: fork helpers/constants
 - `selfref/context_ops.py`: selfref context 纯函数转换
-- `selfref/state.py`: selfref 状态、校验、记忆、compaction 与 fork 结果/child history 构建
 
 ### interface 模块
 
