@@ -104,7 +104,7 @@
 |------|----------|
 | 事件类型定义 | hooks/events.py |
 | 事件发射器 | hooks/event_emitter.py |
-| ReAct 循环 | base/ReAct.py |
+| ReAct 循环 | `base/react_loop.py`（主路径）；`base/ReAct.py` 仅保留兼容包装 |
 | 工具执行 | base/tool_call/execution.py |
 | Tool 装饰器 | tool/tool.py |
 | 工具注册 | llm_decorator/utils/tools.py |

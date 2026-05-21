@@ -50,11 +50,13 @@ SimpleLLMFunc is a lightweight LLM application framework enabling developers to 
 - **`TokenBucket`**: Rate limiting to prevent API throttling
 
 #### **Tier 3: Base Modules** (`base/`)
-- **`messages/`**: Constructs system/user prompts + handles multimodal content
-- **`post_process.py`**: Deserializes LLM responses to target types
-- **`type_resolve/`**: Analyzes function signatures for type information
-- **`ReAct.py`**: Orchestrates LLM calls with tool execution loops (max 5 by default)
-- **`tool_call/`**: Tool extraction, invocation, and result validation
+- **`compile_pipeline.py`**: Formal boundary from `InvocationSpec` + transcript + mutations to provider-facing messages
+- **`context_compile.py`**: Applies `ContextMutation` and preserves protocol-valid context
+- **`react_loop.py`**: Event-only ReAct orchestration loop (`ReactOutput` stream); this is the main runtime path
+- **`llm_call.py`**: Single LLM phase execution, streaming accumulation, assistant mutations
+- **`tool_scheduler.py`**: Concurrent tool batch execution, tool lifecycle events, tool-result mutations
+- **`ReAct.py`**: Thin compatibility wrapper only; do not add new core behavior here
+- **`messages/`**, **`tool_call/`**, **`type_resolve/`**, **`post_process.py`**: Message helpers, tool extraction/execution, type resolution, typed result post-processing
 
 ### 4. **Configuration & Providers** 
 - `.env` file: `LOG_LEVEL=DEBUG` setting
@@ -92,18 +94,18 @@ SimpleLLMFunc is a lightweight LLM application framework enabling developers to 
 4. **LLM Invocation** → Send to `llm_interface.chat(messages=[...])`
 5. **Tool Loop** (if toolkit provided):
    - Check if LLM invoked tools via `tool_calls` field
-   - Execute tools via `base/ReAct.py` (max 5 iterations)
-   - Include tool results in next LLM message
+   - Execute the event-only ReAct loop through `base/react_loop.py`
+   - Tool results become `ContextMutation` objects and are applied at the next compile boundary
 6. **Response Deserialization** → Convert LLM text output to return type
-   - If return type is Pydantic model: auto-parse JSON
-   - If return type is primitive: direct conversion
+   - Complex return types currently use XML-oriented schema/prompting and parsing
+   - Primitive return types use direct conversion
 
 ### `llm_chat` Flow (Multi-turn):
-1. Accepts `history: List[Dict[str, str]]` parameter
-2. Maintains conversation state across calls
-3. Yields tuples of `(content_chunk, updated_history)` in stream mode
-4. Returns mode (`text` vs `raw`) affects tool call visibility in history
-5. Final yield contains only `("", updated_history)` to signal completion
+1. Accepts `history` / `chat_history` parameters for conversation state
+2. Builds an `InvocationSpec` and enters the event-only ReAct runtime
+3. Yields `ReactOutput` items directly (`ResponseYield` and `EventYield`)
+4. `return_mode` / `enable_event` are obsolete; chat calls are always consumed as an event stream
+5. Final history is available on `ReactEndEvent.final_messages` and response yields
 
 ## 🛠 Tool System Patterns
 
@@ -234,7 +236,7 @@ async with async_log_context(trace_id="custom_id", function_name="my_func"):
 | Add new LLM provider | `interface/openai_compatible.py`, update `provider.json` |
 | Create LLM function | `llm_decorator/llm_function_decorator.py` (see flow 219-260) |
 | Create agent with tools | `llm_decorator/llm_chat_decorator.py`, `tool/tool.py` |
-| Debug tool invocation | `base/ReAct.py` (tool loop orchestration), `base/tool_call/execution.py` |
+| Debug tool invocation | `base/react_loop.py`, `base/tool_scheduler.py`, `base/tool_call/execution.py`; `base/ReAct.py` is compatibility only |
 | Extend return types | `base/post_process.py`, `base/type_resolve/` |
 | Customize prompts | `base/messages/` (template and message assembly logic) |
 

@@ -7,6 +7,8 @@ description: Advanced patterns for fork orchestration, compaction strategies, an
 
 This page covers advanced SelfRef patterns for production agent architectures.
 
+For maintainers: 0.8.1 splits the former SelfReference god object into a facade plus `store`, `active_turn`, `mutations`, `memory_api`, `context_memory`, `agent_binding`, `fork_manager`, and `fork_utils`. Application code should still interact through `SelfReference`, `runtime.selfref.context.*`, and `runtime.selfref.fork.*`; the split is an internal maintainability boundary.
+
 ## Compaction Strategy
 
 ### When to Compact

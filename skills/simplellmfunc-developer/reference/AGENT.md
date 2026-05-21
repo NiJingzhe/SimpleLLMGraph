@@ -114,12 +114,13 @@
 |------|----------|
 | 事件类型定义 | hooks/events.py |
 | 事件发射器 | hooks/event_emitter.py |
-| ReAct 循环 | base/ReAct.py |
-| 工具执行 | base/tool_call/execution.py |
+| ReAct 循环 | base/react_loop.py |
+| 工具调度 | base/tool_scheduler.py |
 | Tool 装饰器 | tool/tool.py |
 | 工具注册 | llm_decorator/utils/tools.py |
 | Responses 适配层 | interface/openai_responses_compatible.py |
-| selfref fork 状态 | runtime/selfref/state.py |
+| selfref context memory | runtime/selfref/context_memory.py |
+| selfref fork lifecycle | runtime/selfref/fork_manager.py |
 
 ## 常见问题排查
 

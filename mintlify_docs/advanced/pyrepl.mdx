@@ -7,6 +7,8 @@ description: Persistent Python REPL with runtime primitives and streaming output
 
 PyRepl is a persistent IPython REPL running in a subprocess. It gives the model a continuous execution environment where variables persist across calls and runtime primitives are accessible without imports.
 
+In 0.8.1, `PyRepl` remains the public facade while its internals are split into focused components: worker lifecycle (`pyrepl_worker_client.py`), execute/reset orchestration (`pyrepl_execution.py`), primitive host integration (`pyrepl_primitive_host.py`), tool factory/output formatting (`pyrepl_tools.py`), audit logging (`pyrepl_audit.py`), and input bridging (`pyrepl_input_bridge.py` / `pyrepl_input_mixin.py`). This is an internal architecture cleanup; user-facing usage stays the same.
+
 ## Core Properties
 
 - **Persistent state** — Variables defined in one `execute_code` call are available in the next

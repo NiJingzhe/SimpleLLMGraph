@@ -13,7 +13,7 @@ It is different from the refactor plan document.
 
 The core is now structured around five main internal modules.
 
-1. `SimpleLLMFunc/base/mutation.py`
+1. `SimpleLLMFunc/base/types/mutation.py`
 2. `SimpleLLMFunc/base/context_compile.py`
 3. `SimpleLLMFunc/base/llm_call.py`
 4. `SimpleLLMFunc/base/tool_scheduler.py`
@@ -31,7 +31,7 @@ This rule is fully implemented for the main ReAct turn flow, including selfref c
 
 ## Module Responsibilities
 
-### `base/mutation.py`
+### `base/types/mutation.py`
 
 This module defines structured mutation objects.
 
@@ -163,17 +163,17 @@ Core event production sources are:
 
 These events are carried through `EventBus` and emitted outward as `EventYield`.
 
-## Step-Layer Compatibility Strategy
+## Decorator Compatibility Strategy
 
-The lower core is event-only, but the step layer still preserves some older call patterns.
+The lower core is event-only, and the historical `llm_decorator/steps/` layer has been removed from the active implementation path.
 
 Current strategy:
 
-1. `base.ReAct_loop(...)` always emits `ReactOutput`
-2. `llm_decorator/steps/chat/react.py` derives legacy `(response, messages)` pairs only when needed
-3. `llm_decorator/steps/function/react.py` derives legacy final raw responses only when needed
+1. `base.react_loop.ReAct_loop(...)` always emits `ReactOutput`
+2. `LLMChat.__call__` directly forwards the `ReactOutput` stream from the ReAct runtime
+3. `LLMFunction.__call__` consumes its own event stream and returns the final typed value, while `LLMFunction.stream(...)` exposes `ReactOutput`
 
-This keeps the core clean while containing compatibility logic in the step layer.
+This keeps the core clean while preserving the public function-like and chat-like decorator contracts.
 
 ## Hook Model
 
@@ -217,7 +217,7 @@ The ReAct turn path for selfref context compaction is now mutation-driven.
 Current flow:
 
 1. runtime primitive queues compaction intent with `queue_context_compaction(...)`
-2. `SelfReferenceReActSyncHooks.collect_context_mutations(...)` converts that intent into `ContextSummaryMutation`
+2. `SelfRefSession.collect_context_mutations(...)` converts that intent into `ContextSummaryMutation`
 3. `react_loop` collects those mutations before compile
 4. `compile_context(...)` applies them
 5. finalize writes the resulting compiled context back to selfref store
@@ -230,7 +230,7 @@ During an active ReAct turn:
 
 1. `remember_experience(...)` now queues a pending context mutation intent
 2. `forget_experience(...)` now queues a pending context mutation intent
-3. `SelfReferenceReActSyncHooks.collect_context_mutations(...)` converts them into:
+3. `SelfRefSession.collect_context_mutations(...)` converts them into:
    - `ExperienceRememberMutation`
    - `ExperienceForgetMutation`
 4. `compile_context(...)` applies them before the next model-visible context is produced
@@ -327,9 +327,9 @@ The real code includes hooks, event emission, Langfuse, and compatibility wrappe
 
 These layers still intentionally contain compatibility logic.
 
-1. `base/ReAct.py`
-2. `llm_decorator/steps/chat/react.py`
-3. `llm_decorator/steps/function/react.py`
+1. `base/ReAct.py` (thin wrapper for historical imports)
+2. `llm_decorator/llm_function_decorator.py` (`LLMFunction.__call__` derives a typed return value from `LLMFunction.stream(...)`)
+3. `llm_decorator/llm_chat_decorator.py` (binds SelfRef/history and forwards the `ReactOutput` stream)
 
 The important property is that the new core implementation no longer depends on the old compatibility behavior. Compatibility is layered on top of the new core, not the other way around.
 
@@ -337,7 +337,7 @@ The important property is that the new core implementation no longer depends on 
 
 The architecture is much cleaner now, but some transition-layer behavior still exists.
 
-1. step-layer derivation of legacy return forms from event streams
+1. decorator-level derivation of convenient return forms from event streams
 2. direct selfref store mutation APIs that remain available outside active ReAct turns
 3. compatibility patch points retained for tests and upper-layer patching
 
