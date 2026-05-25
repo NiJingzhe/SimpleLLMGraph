@@ -108,6 +108,32 @@ result = await answer(
 )
 ```
 
+## 多模态图片参数
+
+`@llm_function` 对图片输入保持普通 Python 函数形态：在函数签名里显式声明图片参数。
+
+```python
+from SimpleLLMFunc import llm_function
+from SimpleLLMFunc.type import ImgPath, ImgUrl, Text
+
+@llm_function(llm_interface=llm)
+async def compare_images(
+    instruction: Text,
+    reference: ImgUrl,
+    candidate: ImgPath,
+) -> str:
+    """Compare the two images according to the instruction."""
+    pass
+
+result = await compare_images(
+    Text("Explain the visual differences."),
+    ImgUrl("https://example.com/reference.jpg", detail="high"),
+    ImgPath("./candidate.png", detail="high"),
+)
+```
+
+`ImgUrl` 用于网络 URL 或 `data:` URL。`ImgPath` 用于本地文件，框架会在发送给模型前编码为 data URL。多张图片应表达为显式参数，或 `list[ImgUrl]` / `list[ImgPath]` 这样的类型化列表。
+
 ## 搭配工具使用
 
 `@llm_function` 可以通过 ReAct 循环使用工具：

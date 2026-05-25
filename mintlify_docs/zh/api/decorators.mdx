@@ -22,6 +22,8 @@ from SimpleLLMFunc import llm_function
 
 将一个异步函数转换为 `LLMFunction` callable instance。`await fn(...)` 返回解析后的类型化结果；`fn.stream(...)` 产出 `ReactOutput`。
 
+对于多模态输入，`llm_function` 保持普通 Python 函数风格：显式把图片参数标注为 `ImgUrl`、`ImgPath`，或包含这些类型的列表/Union。`ImgUrl` 支持 `http(s)` URL 与 `data:` URL；`ImgPath` 会在 provider 边界编码为图片 data URL。
+
 ### 参数
 
 | 参数 | 类型 | 默认值 | 描述 |
@@ -83,6 +85,8 @@ from SimpleLLMFunc import llm_chat
 
 创建一个 `LLMChat` callable instance。调用它会产出 `AsyncGenerator[ReactOutput, None]`，并为 SelfRef 提供稳定的 agent identity。
 
+对于多模态 chat 输入，推荐使用单个显式的 `message: UserChatMessage` 参数。`UserChatMessage` 兼容 OpenAI Chat Completions user message，可以包含 text 与 `image_url` content parts。
+
 ### 参数
 
 | 参数 | 类型 | 默认值 | 描述 |
@@ -129,6 +133,27 @@ async for output in agent("What is SimpleLLMFunc?", history):
     if is_response_yield(output):
         print(output.response)
         history = output.messages
+```
+
+### 多模态 Chat 示例
+
+```python
+from SimpleLLMFunc import llm_chat
+from SimpleLLMFunc.type import UserChatMessage, ImgUrl
+
+@llm_chat(llm_interface=llm)
+async def vision_agent(message: UserChatMessage, history: list | None = None):
+    """回答用户图片相关的问题。"""
+    pass
+
+async for output in vision_agent(
+    UserChatMessage.multimodal(
+        "这张图里有什么？",
+        ImgUrl("https://example.com/cat.jpg", detail="high"),
+    ),
+    history=[],
+):
+    ...
 ```
 
 ---

@@ -64,7 +64,12 @@ from SimpleLLMFunc.observability.langfuse_client import (
 )
 from SimpleLLMFunc.runtime.selfref.state import MemoryHistory, SelfReference
 from SimpleLLMFunc.tool import Tool
-from SimpleLLMFunc.type import HistoryList, MessageList, NormalizedMessageParam
+from SimpleLLMFunc.type import (
+    HistoryList,
+    MessageList,
+    NormalizedMessageParam,
+    UserChatMessage,
+)
 
 T = TypeVar("T")
 P = ParamSpec("P")
@@ -182,20 +187,25 @@ class LLMChat:
             )
 
         message_annotation = message_param.annotation
+        allowed_message_annotations = {str, UserChatMessage}
+        if isinstance(message_annotation, str):
+            annotation_allowed = message_annotation in {
+                "str",
+                "UserChatMessage",
+            }
+        else:
+            annotation_allowed = message_annotation in allowed_message_annotations
+
         if (
             message_annotation is inspect.Signature.empty
             or message_annotation is None
-            or (
-                message_annotation is not str
-                and not (
-                    isinstance(message_annotation, str) and message_annotation == "str"
-                )
-            )
+            or not annotation_allowed
         ):
             raise TypeError(
                 "llm_chat(strict_signature=True) requires the second parameter to be "
-                "annotated as `str` for the user message, e.g. "
-                "`async def agent(history, message: str, ...)`."
+                "annotated as `str` or `UserChatMessage` for the user "
+                "message, e.g. "
+                "`async def agent(history, message: UserChatMessage, ...)`."
             )
 
         if message_param.name != "message":
@@ -209,7 +219,7 @@ class LLMChat:
                 continue
             raise TypeError(
                 "llm_chat(strict_signature=True) only allows an optional `_template_params` "
-                "parameter in addition to `(history, message: str)`. "
+                "parameter in addition to `(history, message)`. "
                 f"Unexpected parameter: {extra_param.name!r}."
             )
 

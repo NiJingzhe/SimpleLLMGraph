@@ -374,13 +374,13 @@ Tools can be stacked with `@llm_function` on the same function.
 ### Multimodal Support
 
 ```python
-from SimpleLLMFunc.type import ImgPath, ImgUrl, Text
+from SimpleLLMFunc.type import UserChatMessage, ImgPath, ImgUrl, Text
 
 @llm_function(llm_interface=llm)
 async def analyze_image(
     description: Text,        # Text description
-    web_image: ImgUrl,        # Web image URL
-    local_image: ImgPath      # Local image path
+    web_image: ImgUrl,        # Web image URL or data: URL
+    local_image: ImgPath      # Local image path, encoded as a data URL
 ) -> str:
     """Analyze images based on the description"""
     pass
@@ -390,7 +390,23 @@ result = await analyze_image(
     web_image=ImgUrl("https://example.com/image.jpg"),
     local_image=ImgPath("./reference.jpg")
 )
+
+@llm_chat(llm_interface=llm)
+async def vision_agent(message: UserChatMessage, history=None):
+    """Answer questions about the user's multimodal message."""
+    pass
+
+async for output in vision_agent(
+    UserChatMessage.multimodal(
+        "What is in this image?",
+        ImgUrl("https://example.com/cat.jpg", detail="high"),
+    ),
+    history=[],
+):
+    ...
 ```
+
+`llm_function` keeps the normal Python-function style: declare image parameters as `ImgUrl` / `ImgPath` / lists of those types. `llm_chat` accepts an explicit OpenAI-compatible `UserChatMessage`, so an Agent can receive text and image content in one user message.
 
 ### Tool-Call Limit Default
 

@@ -35,6 +35,7 @@ This is critical for writing good prompts in SimpleLLMFunc: your docstring is im
   - plain-text or XML output constraints depending on the return type
 - If tools are mounted, the framework prepends a deduplicated `<tool_best_practices>` block before the main system prompt.
 - Runtime argument values are not put in the system prompt; they go into the user prompt.
+- For image input, keep the function-like style: declare explicit parameters as `ImgUrl`, `ImgPath`, or lists/unions of those types. Use `ImgUrl` for web/data URLs and `ImgPath` for local files.
 
 Write `llm_function` docstrings as task policy, quality bar, constraints, and style guidance. Do not waste docstring space restating parameter schemas or low-level output formatting that the framework already injects.
 
@@ -45,6 +46,7 @@ Write `llm_function` docstrings as task policy, quality bar, constraints, and st
 - Then the framework prepends `<tool_best_practices>` when tools exist.
 - Then it appends a `<must_principles>` block that tells the model to use native structured tool calls instead of writing fake tool calls in assistant text.
 - Current turn data is added as the user message, not merged into the system prompt.
+- For multimodal user turns, prefer `message: UserChatMessage` and construct content with `UserChatMessage.multimodal("text", ImgUrl(...), ImgPath(...))`. This keeps `llm_chat` as an Agent abstraction over one explicit user message instead of many loosely named image parameters.
 
 Write `llm_chat` docstrings as stable assistant policy and long-lived behavior. Put current task content in the function call arguments, not in the docstring.
 

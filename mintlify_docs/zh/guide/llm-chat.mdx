@@ -65,6 +65,32 @@ async for output in assistant("Tell me about Python", history):
 
 设置 `stream=False` 时，模型响应会作为单个 `ResponseYield` 一次性返回。
 
+## 多模态用户消息
+
+对于多模态 chat 输入，只使用一个 canonical user-message 对象：`UserChatMessage`。这样 `@llm_chat` 仍然是“一个用户回合”的 Agent 抽象，不会出现多套图片参数风格。
+
+```python
+from SimpleLLMFunc import llm_chat
+from SimpleLLMFunc.type import ImgPath, ImgUrl, UserChatMessage
+
+@llm_chat(llm_interface=llm, stream=True)
+async def vision_agent(message: UserChatMessage, history: list | None = None):
+    """Answer questions about user-provided images."""
+    pass
+
+async for output in vision_agent(
+    UserChatMessage.multimodal(
+        "Compare these images and list visible differences.",
+        ImgUrl("https://example.com/reference.jpg", detail="high"),
+        ImgPath("./candidate.png", detail="high"),
+    ),
+    history=[],
+):
+    ...
+```
+
+`UserChatMessage.multimodal(...)` 接受文本以及任意数量的 `ImgUrl` / `ImgPath`。它会归一化为 OpenAI-compatible user message，包含 `text` 与 `image_url` content parts。未来新增输入模态时也应扩展 `UserChatMessage`，而不是新增另一套 chat 输入约定。
+
 ## 工具
 
 ```python

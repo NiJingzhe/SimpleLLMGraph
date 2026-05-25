@@ -43,6 +43,7 @@ from SimpleLLMFunc.hooks.stream import (
     EventOrigin,
     EventYield,
     ReactOutput,
+    ResponseYield,
     is_response_yield,
 )
 from SimpleLLMFunc.llm_decorator.llm_chat_decorator import (
@@ -56,6 +57,7 @@ from SimpleLLMFunc.observability.langfuse_client import (
     set_langfuse_trace_context,
 )
 from SimpleLLMFunc.tool import Tool
+from SimpleLLMFunc.type import UserChatMessage, ImgUrl
 
 
 _MUST_PROMPT_BLOCK = "<must_principles>"
@@ -367,6 +369,77 @@ def test_llm_chat_strict_signature_enforces_history_message_shape() -> None:
         """test agent"""
 
     assert callable(agent)
+
+
+
+def test_llm_chat_strict_signature_accepts_chat_user_message_shape() -> None:
+    mock_llm = MagicMock()
+    mock_llm.model_name = "test-model"
+
+    @llm_chat(llm_interface=mock_llm, strict_signature=True)
+    async def agent(history, message: UserChatMessage, _template_params=None):
+        """test agent"""
+
+    assert callable(agent)
+
+
+
+@pytest.mark.asyncio
+async def test_llm_chat_accepts_explicit_multimodal_user_message() -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_react_loop(*args: Any, **kwargs: Any):
+        _ = args
+        captured["messages"] = kwargs["messages"]
+        captured["user_task_prompt"] = kwargs["user_task_prompt"]
+        yield ResponseYield(
+            type="response",
+            response="ok",
+            messages=kwargs["messages"],
+        )
+
+    mock_llm = MagicMock()
+    mock_llm.model_name = "test-model"
+
+    with (
+        patch(
+            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.ReAct_loop",
+            new=fake_react_loop,
+        ),
+        patch(
+            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.langfuse_client.start_as_current_observation",
+            return_value=_DummyObservation(),
+        ),
+    ):
+
+        @llm_chat(llm_interface=mock_llm)
+        async def agent(message: UserChatMessage, history=None):
+            """vision agent"""
+
+        user_message = UserChatMessage.multimodal(
+            "What is in this image?",
+            ImgUrl("https://example.com/cat.png", detail="high"),
+        )
+
+        outputs = []
+        async for output in agent(user_message, history=[]):
+            outputs.append(output)
+
+    assert outputs
+    user_message_payload = captured["messages"][-1]
+    assert user_message_payload["role"] == "user"
+    assert user_message_payload["content"] == [
+        {"type": "text", "text": "What is in this image?"},
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "https://example.com/cat.png",
+                "detail": "high",
+            },
+        },
+    ]
+    assert '"role": "user"' in captured["user_task_prompt"]
+    assert "https://example.com/cat.png" in captured["user_task_prompt"]
 
 
 def test_llm_chat_strict_signature_rejects_non_canonical_shapes() -> None:

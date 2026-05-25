@@ -7,6 +7,7 @@ Use `@llm_function` for one-shot typed tasks. It returns an `LLMFunction` callab
 Best practices:
 
 - Keep the signature narrow and explicit.
+- For image input, declare explicit `ImgUrl` / `ImgPath` parameters or typed lists such as `list[ImgUrl]`. This is the correct multimodal style for `llm_function`.
 - Use a typed return value instead of asking the model for hand-written JSON.
 - Use `_template_params` only when one prompt pattern truly needs runtime role/style slots.
 - Add a toolkit only for real external capability, not for tasks the model can do unaided.
@@ -19,6 +20,7 @@ Best practices:
 
 - Use `stream=True` for chat UIs or incremental feedback.
 - Name the history parameter `history` or `chat_history`.
+- For multimodal input, use exactly one canonical `message: UserChatMessage` parameter and construct turns with `UserChatMessage.multimodal(...)`.
 - Keep `history` outside the function and feed it back in on the next turn.
 - Use `strict_signature=True` when you want a stable agent signature for self-reference or fork-heavy flows.
 - Set an explicit `max_tool_calls` only if you want a hard loop cap.
