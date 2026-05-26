@@ -5,7 +5,7 @@ license: MIT
 compatibility: "Python 3.12+ repo with async execution and OpenAI-compatible chat endpoints or OpenAI Responses API endpoints configured through provider.json."
 metadata:
   project: SimpleLLMFunc
-  version: "0.8.1"
+  version: "0.8.2"
 ---
 
 # SimpleLLMFunc Usage
