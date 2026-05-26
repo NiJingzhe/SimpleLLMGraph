@@ -2,12 +2,32 @@
 
 ## Unreleased
 
+## 0.8.2 (2026-05-27) - Multimodal Inputs and PyRepl Image Outputs
+
 ### ✨ New Features
 
 1. **Multimodal input support**:
    - `llm_function` now supports typed image input through explicit `ImgUrl` / `ImgPath` parameters and lists/unions containing those types.
    - `llm_chat` now accepts `UserChatMessage` for OpenAI-compatible multimodal user messages containing text and `image_url` content parts.
    - Added `UserChatMessage.multimodal(...)`, the canonical `UserChatMessage` helper for ergonomic chat message construction.
+
+2. **PyRepl multimodal image output**:
+   - `PyRepl.execute(...)` now exposes captured image artifacts from `display(Image(...))`, image-rich last expressions, and explicit `ImgPath` / `ImgUrl` results.
+   - The `execute_code` tool converts image artifacts into multimodal tool results so agents can inspect generated plots directly.
+   - Tool results now support multiple images through `list[ImgPath | ImgUrl]` and `(text, list[ImgPath | ImgUrl])`.
+   - `OpenAIResponsesCompatible` now maps chat-style multimodal user content to Responses API `input_text` / `input_image` parts.
+
+### 📚 Documentation & Examples
+
+1. **PyRepl image workflow docs**:
+   - Added English and Chinese docs for PyRepl image artifact capture and multimodal tool return behavior.
+   - Added `examples/pyrepl_seaborn_multimodal_images.py`, a runnable seaborn example that returns multiple generated plots to the model.
+   - Added developer skill notes covering the split PyRepl architecture and image artifact capture flow.
+
+### 🧪 Testing
+
+- Added regression coverage for multimodal chat input, multiple-image tool results, PyRepl image artifact capture, scheduler event results, and Responses API content conversion.
+- Verified targeted release suites with `143 passed` for PyRepl/tool/Responses paths.
 
 ## 0.8.1 (2026-05-20) - Architecture Split: PyRepl, SelfRef, and Chat Decorator Internals
 

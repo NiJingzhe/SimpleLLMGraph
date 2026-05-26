@@ -21,9 +21,9 @@
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/NiJingzhe/SimpleLLMFunc/graphs/commit-activity)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/NiJingzhe/SimpleLLMFunc/pulls)
 
-### Update Notes (0.8.1)
+### Update Notes (0.8.2)
 
-**Architecture cleanup release**: the public APIs stay stable, while PyRepl, SelfRef, and `llm_chat` internals have been split into smaller facade/component modules. **PyRepl** is now a thin facade over worker lifecycle, primitive host, execution, audit, tools, and input bridge components. **SelfRef** now separates durable store, active turn state, mutation queues, context memory, fork management, and agent binding. The full test suite passes with these refactors. See **[CHANGELOG](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/CHANGELOG.md)** for details.
+**Multimodal release**: `llm_function` now accepts typed image inputs (`ImgPath`, `ImgUrl`, lists, and unions), while `llm_chat` gets the canonical `UserChatMessage.multimodal(...)` helper for mixed text/image user turns. **PyRepl** now captures image artifacts from `display(Image(...))`, image-rich last expressions, and `ImgPath` / `ImgUrl` results, then returns them through `execute_code` as multimodal tool output. Tool results also support multiple images via `list[ImgPath | ImgUrl]` and `(text, list[ImgPath | ImgUrl])`. See **[CHANGELOG](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/CHANGELOG.md)** for details.
 
 ### Documentation
 
@@ -597,6 +597,7 @@ python examples/llm_function_pydantic_example.py # Structured output
 python examples/event_stream_chatbot.py          # Chat + event stream
 python examples/parallel_toolcall_example.py     # Concurrent tool calls
 python examples/pyrepl_example.py                # Persistent REPL
+python examples/pyrepl_seaborn_multimodal_images.py # PyRepl image outputs
 python examples/response_api_example.py          # Responses API
 ```
 
@@ -654,7 +655,7 @@ LANGFUSE_EXPORT_ALL_SPANS=true
   month = {February},
   title = {{SimpleLLMFunc: A New Approach to Build LLM Applications}},
   url = {https://github.com/NiJingzhe/SimpleLLMFunc},
-  version = {0.8.1},
+  version = {0.8.2},
   year = {2026}
 }
 ```

@@ -21,9 +21,9 @@
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/NiJingzhe/SimpleLLMFunc/graphs/commit-activity)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/NiJingzhe/SimpleLLMFunc/pulls)
 
-### 更新说明 (0.8.1)
+### 更新说明 (0.8.2)
 
-**架构清理版本**：Public API 保持稳定，同时继续拆分 PyRepl、SelfRef 与 `llm_chat` 内部模块。**PyRepl** 现在是更薄的 facade，worker 生命周期、primitive host、execute/reset 编排、audit、tools、input bridge 分别由独立组件承载。**SelfRef** 现在拆分为 durable store、active turn、mutation queues、context memory、fork manager 与 agent binding。该重构已通过完整测试套件。详情见 **[更新日志](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/CHANGELOG.md)**。
+**多模态版本**：`llm_function` 现在支持 typed image inputs（`ImgPath`、`ImgUrl`、列表和 union），`llm_chat` 新增 canonical `UserChatMessage.multimodal(...)` helper，用于混合文本/图片用户输入。**PyRepl** 现在会捕获 `display(Image(...))`、图片型最后表达式，以及 `ImgPath` / `ImgUrl` 结果产生的图片 artifact，并通过 `execute_code` 作为多模态工具输出返回。工具结果也支持通过 `list[ImgPath | ImgUrl]` 和 `(text, list[ImgPath | ImgUrl])` 一次返回多张图片。详情见 **[更新日志](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/CHANGELOG.md)**。
 
 ### 文档
 
@@ -596,6 +596,7 @@ python examples/llm_function_pydantic_example.py # 结构化输出
 python examples/event_stream_chatbot.py          # 对话 + 事件流
 python examples/parallel_toolcall_example.py     # 并发工具调用
 python examples/pyrepl_example.py                # 持久 REPL
+python examples/pyrepl_seaborn_multimodal_images.py # PyRepl 图片输出
 python examples/response_api_example.py          # Responses API
 ```
 
@@ -653,7 +654,7 @@ LANGFUSE_EXPORT_ALL_SPANS=true
   month = {February},
   title = {{SimpleLLMFunc: A New Approach to Build LLM Applications}},
   url = {https://github.com/NiJingzhe/SimpleLLMFunc},
-  version = {0.8.1},
+  version = {0.8.2},
   year = {2026}
 }
 ```
