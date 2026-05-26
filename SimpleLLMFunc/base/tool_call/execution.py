@@ -12,6 +12,7 @@ from typing import (
     Dict,
     List,
     Optional,
+    cast,
     get_type_hints,
     get_origin,
     get_args,
@@ -42,6 +43,57 @@ class ExecutedToolCallResult:
     is_multimodal: bool = False
     success: bool = True
     error: Optional[Exception] = None
+
+
+def _is_image_payload(value: Any) -> bool:
+    return isinstance(value, (ImgPath, ImgUrl))
+
+
+def _is_image_payload_list(value: Any) -> bool:
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(_is_image_payload(item) for item in value)
+    )
+
+
+def _build_image_content(image: ImgPath | ImgUrl) -> Dict[str, Any]:
+    if isinstance(image, ImgUrl):
+        return {
+            "type": "image_url",
+            "image_url": {
+                "url": image.url,
+                "detail": image.detail,
+            },
+        }
+
+    base64_img = image.to_base64()
+    mime_type = image.get_mime_type()
+    data_url = f"data:{mime_type};base64,{base64_img}"
+    return {
+        "type": "image_url",
+        "image_url": {
+            "url": data_url,
+            "detail": image.detail,
+        },
+    }
+
+
+def _build_multimodal_tool_message(
+    *,
+    text: str,
+    images: list[ImgPath | ImgUrl],
+) -> Dict[str, Any]:
+    return {
+        "role": "user",
+        "content": [
+            {
+                "type": "text",
+                "text": text,
+            },
+            *[_build_image_content(image) for image in images],
+        ],
+    }
 
 
 def _convert_tool_arguments(
@@ -306,8 +358,8 @@ async def execute_single_tool_call_result(
 
             if not is_valid_tool_result(tool_result):
                 push_warning(
-                    f"工具 '{tool_name}' 返回了不支持的格式: {type(tool_result)}。支持的返回格式包括: str, JSON可序列化对象, ImgPath, ImgUrl, Tuple[str, ImgPath], Tuple[str, ImgUrl]",
-                    f"Tool '{tool_name}' returned unsupported type {type(tool_result)}. Supported return formats: str, JSON-serializable objects, ImgPath, ImgUrl, Tuple[str, ImgPath], Tuple[str, ImgUrl]",
+                    f"工具 '{tool_name}' 返回了不支持的格式: {type(tool_result)}。支持的返回格式包括: str, JSON可序列化对象, ImgPath, ImgUrl, List[ImgPath | ImgUrl], Tuple[str, ImgPath], Tuple[str, ImgUrl], Tuple[str, List[ImgPath | ImgUrl]]",
+                    f"Tool '{tool_name}' returned unsupported type {type(tool_result)}. Supported return formats: str, JSON-serializable objects, ImgPath, ImgUrl, List[ImgPath | ImgUrl], Tuple[str, ImgPath], Tuple[str, ImgUrl], Tuple[str, List[ImgPath | ImgUrl]]",
                     location=get_location(),
                 )
                 tool_result_content_json: str = json.dumps(
@@ -328,24 +380,10 @@ async def execute_single_tool_call_result(
                 )
 
             if isinstance(tool_result, ImgUrl):
-                image_content = {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": tool_result.url,
-                        "detail": tool_result.detail,
-                    },
-                }
-
-                user_multimodal_message = {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": f"This is an image returned by tool '{tool_name}':",
-                        },
-                        image_content,
-                    ],
-                }
+                user_multimodal_message = _build_multimodal_tool_message(
+                    text=f"This is an image returned by tool '{tool_name}':",
+                    images=[tool_result],
+                )
                 messages_to_append.append(user_multimodal_message)
                 return ExecutedToolCallResult(
                     tool_call=tool_call,
@@ -357,28 +395,26 @@ async def execute_single_tool_call_result(
                 )
 
             if isinstance(tool_result, ImgPath):
-                base64_img = tool_result.to_base64()
-                mime_type = tool_result.get_mime_type()
-                data_url = f"data:{mime_type};base64,{base64_img}"
+                user_multimodal_message = _build_multimodal_tool_message(
+                    text=f"This is an image file returned by tool '{tool_name}':",
+                    images=[tool_result],
+                )
+                messages_to_append.append(user_multimodal_message)
+                return ExecutedToolCallResult(
+                    tool_call=tool_call,
+                    tool_call_id=str(tool_call_id or ""),
+                    tool_name=str(tool_name or ""),
+                    messages=messages_to_append,
+                    result=tool_result,
+                    is_multimodal=True,
+                )
 
-                image_content = {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": data_url,
-                        "detail": tool_result.detail,
-                    },
-                }
-
-                user_multimodal_message = {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": f"This is an image file returned by tool '{tool_name}':",
-                        },
-                        image_content,
-                    ],
-                }
+            if _is_image_payload_list(tool_result):
+                image_payloads = cast(list[ImgPath | ImgUrl], tool_result)
+                user_multimodal_message = _build_multimodal_tool_message(
+                    text=f"This is images returned by tool '{tool_name}':",
+                    images=image_payloads,
+                )
                 messages_to_append.append(user_multimodal_message)
                 return ExecutedToolCallResult(
                     tool_call=tool_call,
@@ -392,24 +428,10 @@ async def execute_single_tool_call_result(
             if isinstance(tool_result, tuple) and len(tool_result) == 2:
                 text_part, img_part = tool_result
                 if isinstance(text_part, str) and isinstance(img_part, ImgUrl):
-                    image_content = {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": img_part.url,
-                            "detail": img_part.detail,
-                        },
-                    }
-
-                    user_multimodal_message = {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"This is an image and description returned by tool '{tool_name}': {text_part}",
-                            },
-                            image_content,
-                        ],
-                    }
+                    user_multimodal_message = _build_multimodal_tool_message(
+                        text=f"This is an image and description returned by tool '{tool_name}': {text_part}",
+                        images=[img_part],
+                    )
                     messages_to_append.append(user_multimodal_message)
                     return ExecutedToolCallResult(
                         tool_call=tool_call,
@@ -421,28 +443,26 @@ async def execute_single_tool_call_result(
                     )
 
                 if isinstance(text_part, str) and isinstance(img_part, ImgPath):
-                    base64_img = img_part.to_base64()
-                    mime_type = img_part.get_mime_type()
-                    data_url = f"data:{mime_type};base64,{base64_img}"
+                    user_multimodal_message = _build_multimodal_tool_message(
+                        text=f"This is an image file and description returned by tool '{tool_name}': {text_part}",
+                        images=[img_part],
+                    )
+                    messages_to_append.append(user_multimodal_message)
+                    return ExecutedToolCallResult(
+                        tool_call=tool_call,
+                        tool_call_id=str(tool_call_id or ""),
+                        tool_name=str(tool_name or ""),
+                        messages=messages_to_append,
+                        result=tool_result,
+                        is_multimodal=True,
+                    )
 
-                    image_content = {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": data_url,
-                            "detail": img_part.detail,
-                        },
-                    }
-
-                    user_multimodal_message = {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"This is an image file and description returned by tool '{tool_name}': {text_part}",
-                            },
-                            image_content,
-                        ],
-                    }
+                if isinstance(text_part, str) and _is_image_payload_list(img_part):
+                    image_payloads = cast(list[ImgPath | ImgUrl], img_part)
+                    user_multimodal_message = _build_multimodal_tool_message(
+                        text=f"This is images and description returned by tool '{tool_name}': {text_part}",
+                        images=image_payloads,
+                    )
                     messages_to_append.append(user_multimodal_message)
                     return ExecutedToolCallResult(
                         tool_call=tool_call,

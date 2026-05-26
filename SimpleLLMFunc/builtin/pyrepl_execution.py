@@ -83,6 +83,7 @@ class PyReplExecutionMixin:
             error_message: Optional[str] = None
             error_details: Optional[dict[str, Any]] = None
             return_value: Optional[str] = None
+            artifacts: List[dict[str, Any]] = []
 
             pending_input_requests: dict[str, queue.Queue[str]] = {}
             pending_input_waiters = 0
@@ -278,6 +279,11 @@ class PyReplExecutionMixin:
                                     else None
                                 )
                             )
+                            raw_artifacts = event.get("artifacts")
+                            if isinstance(raw_artifacts, list):
+                                artifacts = [
+                                    item for item in raw_artifacts if isinstance(item, dict)
+                                ]
                             break
 
                     now = time.monotonic()
@@ -364,6 +370,7 @@ class PyReplExecutionMixin:
                 "stdout": "".join(stdout_parts),
                 "stderr": "".join(stderr_parts),
                 "return_value": return_value,
+                "artifacts": artifacts,
                 "error": error_message,
                 "error_details": error_details,
                 "execution_time_ms": execution_time_ms,

@@ -147,6 +147,15 @@ async def analyze_image(image_path: str) -> tuple[str, ImgPath]:
     return description, annotated
 ```
 
+For multiple images, return a non-empty list or pair text with a list:
+
+```python
+@tool
+async def compare_images(left: str, right: str) -> tuple[str, list[ImgPath | ImgUrl]]:
+    """Return a comparison note and both images."""
+    return "Compare these two images", [ImgPath(left), ImgPath(right)]
+```
+
 ## Long Output Handling
 
 For tools that produce very long output:

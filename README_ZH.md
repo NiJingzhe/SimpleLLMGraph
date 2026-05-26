@@ -370,6 +370,8 @@ async def generate_chart(data: str, chart_type: str = "bar") -> ImgPath:
 
 `@tool` 可以与 `@llm_function` 叠加在同一个函数上。
 
+工具也可以返回多张图片并附带可选文本，例如 `tuple[str, list[ImgPath | ImgUrl]]`。当 PyRepl 的 `execute_code` 代码通过 `display(Image(...))` 或图片型最后表达式输出图片时，也会走这条多模态返回链路。
+
 ### 多模态支持
 
 ```python

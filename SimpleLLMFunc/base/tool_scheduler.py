@@ -123,7 +123,11 @@ async def schedule_tool_batch(
 
             parsed_arguments_end = parse_tool_call_arguments(arguments_str, allow_closure=True)
             result_payload: ToolResult = ""
+            if execution_result.is_multimodal:
+                result_payload = cast(ToolResult, execution_result.result)
             for mutation in mutations:
+                if execution_result.is_multimodal:
+                    break
                 if isinstance(mutation, ToolResultMutation):
                     try:
                         result_payload = json.loads(mutation.content)

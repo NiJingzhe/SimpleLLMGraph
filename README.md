@@ -371,6 +371,8 @@ async def generate_chart(data: str, chart_type: str = "bar") -> ImgPath:
 
 Tools can be stacked with `@llm_function` on the same function.
 
+Tools can also return multiple images with optional text, for example `tuple[str, list[ImgPath | ImgUrl]]`. PyRepl's `execute_code` uses this path when code outputs images through `display(Image(...))` or an image-rich last expression.
+
 ### Multimodal Support
 
 ```python

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -106,6 +105,56 @@ async def test_schedule_tool_batch_maps_multimodal_messages_to_user_message_muta
     assert isinstance(result, ToolSchedulerResult)
     assert isinstance(result.mutations[0], MultimodalToolResultMutation)
     assert result.mutations[0].user_messages[0]["role"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_schedule_tool_batch_sets_multimodal_tool_end_result() -> None:
+    async def fake_execute_single_tool_call_result(tool_call, tool_map, event_emitter=None, trace_context=None):
+        _ = (tool_map, event_emitter, trace_context)
+        return ExecutedToolCallResult(
+            tool_call=tool_call,
+            tool_call_id=tool_call["id"],
+            tool_name=tool_call["function"]["name"],
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "image summary"},
+                        {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}},
+                    ],
+                }
+            ],
+            result=("image summary", ["image-placeholder"]),
+            is_multimodal=True,
+        )
+
+    tool_call = {
+        "id": "call_1",
+        "type": "function",
+        "function": {"name": "test_tool", "arguments": "{}"},
+    }
+
+    outputs = []
+    with patch(
+        "SimpleLLMFunc.base.tool_scheduler.execute_single_tool_call_result",
+        new=fake_execute_single_tool_call_result,
+    ):
+        async for output in schedule_tool_batch(
+            tool_calls=[tool_call],
+            messages=[{"role": "user", "content": "hello"}],
+            tool_map={"test_tool": AsyncMock(return_value="ok")},
+            trace_id="trace-1",
+            func_name="test_func",
+            iteration=1,
+        ):
+            outputs.append(output)
+
+    tool_end = next(
+        output.event
+        for output in outputs
+        if isinstance(output, EventYield) and isinstance(output.event, ToolCallEndEvent)
+    )
+    assert tool_end.result == ("image summary", ["image-placeholder"])
 
 
 @pytest.mark.asyncio

@@ -147,7 +147,7 @@ class PyRepl(
         code: str,
         timeout_seconds: Optional[float] = None,
         event_emitter: Optional[ToolEventEmitter] = None,
-    ) -> str:
+    ) -> Any:
         return await execute_tool_adapter(
             self,
             code,

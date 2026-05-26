@@ -147,6 +147,15 @@ async def analyze_image(image_path: str) -> tuple[str, ImgPath]:
     return description, annotated
 ```
 
+对于多张图片，可以返回非空列表，或把文本与图片列表组合返回：
+
+```python
+@tool
+async def compare_images(left: str, right: str) -> tuple[str, list[ImgPath | ImgUrl]]:
+    """Return a comparison note and both images."""
+    return "Compare these two images", [ImgPath(left), ImgPath(right)]
+```
+
 ## 长输出处理
 
 对于产生超长输出的工具：

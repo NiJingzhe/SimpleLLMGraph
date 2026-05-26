@@ -36,6 +36,7 @@ roman-numerals = "^4.1.0"
 textual-hmr = "^0.0.2"
 ruff = "^0.15.12"
 pyright = "^1.1.409"
+seaborn = "^0.13.2"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

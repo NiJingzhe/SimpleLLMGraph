@@ -130,10 +130,13 @@ async def execute_code(code: str, event_emitter=None) -> dict:
     "stdout": str,          # Captured stdout
     "stderr": str,          # Captured stderr
     "return_value": str,    # Repr of last expression (or None)
+    "artifacts": list,      # 直接调用 PyRepl.execute 时捕获到的图片产物
     "error": str | None,    # Error message if failed
     "execution_time_ms": float,
 }
 ```
+
+通过 agent toolset 使用时，`execute_code` 返回自然语言摘要。如果代码通过 `display(Image(...))`、图片型最后表达式，或 `ImgPath(...)` / `ImgUrl(...)` 输出图片，工具结果会变成多模态结果，模型可以直接查看图片。
 
 #### reset_repl
 

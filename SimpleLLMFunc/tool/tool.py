@@ -103,6 +103,59 @@ def _truncate_text_to_tokens(text: str, max_tokens: int) -> tuple[str, int]:
     return result_text, result_tokens
 
 
+def _truncate_tool_result_if_needed(tool_name: str, result: Any) -> Any:
+    if not isinstance(result, str):
+        return result
+
+    token_count = _estimate_token_count(result)
+
+    if token_count <= TOO_LONG_TO_FILE_MAX_TOKENS:
+        return result
+
+    temp_dir = tempfile.gettempdir()
+    temp_file = os.path.join(
+        temp_dir, f"tool_result_{tool_name}_{os.urandom(8).hex()}.txt"
+    )
+
+    try:
+        with open(temp_file, "w", encoding="utf-8") as f:
+            f.write(result)
+    except Exception as e:
+        push_error(f"Failed to save tool result to temporary file: {e}")
+        return result
+
+    truncated_text, _ = _truncate_text_to_tokens(
+        result,
+        TOO_LONG_TO_FILE_MAX_TOKENS,
+    )
+
+    reminder = (
+        "\n\n<system-reminder>\n"
+        "Tool output was too long, so this result has been truncated. "
+        f"The full result was saved to {temp_file}. "
+        "Use file-operation tools or PyRepl to read only the parts you need. "
+        "If you do not have a way to read files, warn the user and ask for help.\n"
+        "</system-reminder>"
+    )
+
+    return truncated_text + reminder
+
+
+def _truncate_multimodal_text_if_needed(tool_name: str, result: Any) -> Any:
+    if not (isinstance(result, tuple) and len(result) == 2):
+        return result
+    text_part, image_part = result
+    if not isinstance(text_part, str):
+        return result
+    if isinstance(image_part, (ImgPath, ImgUrl)) or (
+        isinstance(image_part, list)
+        and image_part
+        and all(isinstance(item, (ImgPath, ImgUrl)) for item in image_part)
+    ):
+        return (_truncate_tool_result_if_needed(tool_name, text_part), image_part)
+    return result
+
+
 class Parameter:
     """
     工具参数的简单包装类，仅用于存储信息，不作为主要API
@@ -292,41 +345,9 @@ class Tool(ABC):
             result = await self.func(*args, **kwargs)
 
             # 如果启用了 too_long_to_file 功能，检查结果是否需要截断
-            if self.too_long_to_file and isinstance(result, str):
-                token_count = _estimate_token_count(result)
-
-                if token_count > TOO_LONG_TO_FILE_MAX_TOKENS:
-                    # 将完整结果保存到临时文件
-                    temp_dir = tempfile.gettempdir()
-                    temp_file = os.path.join(
-                        temp_dir, f"tool_result_{self.name}_{os.urandom(8).hex()}.txt"
-                    )
-
-                    try:
-                        with open(temp_file, "w", encoding="utf-8") as f:
-                            f.write(result)
-                    except Exception as e:
-                        push_error(f"Failed to save tool result to temporary file: {e}")
-                        # 如果保存失败，直接返回原始结果
-                        return result
-
-                    # 截断文本到指定 token 数量
-                    truncated_text, _ = _truncate_text_to_tokens(
-                        result,
-                        TOO_LONG_TO_FILE_MAX_TOKENS,
-                    )
-
-                    # 添加提示信息
-                    reminder = (
-                        "\n\n<system-reminder>\n"
-                        "Tool output was too long, so this result has been truncated. "
-                        f"The full result was saved to {temp_file}. "
-                        "Use file-operation tools or PyRepl to read only the parts you need. "
-                        "If you do not have a way to read files, warn the user and ask for help.\n"
-                        "</system-reminder>"
-                    )
-
-                    return truncated_text + reminder
+            if self.too_long_to_file:
+                result = _truncate_tool_result_if_needed(self.name, result)
+                result = _truncate_multimodal_text_if_needed(self.name, result)
 
             return result
 
@@ -537,8 +558,10 @@ def tool(
     - **多模态返回**:
       - ImgPath: 返回本地图片路径，用于生成图表、处理后的图片等
       - ImgUrl: 返回网络图片URL，用于搜索到的图片、在线资源等
+      - List[ImgPath | ImgUrl]: 返回多张图片
       - Tuple[str, ImgPath]: 返回说明文本和图片的组合
       - Tuple[str, ImgUrl]: 返回说明文本和网络图片的组合
+      - Tuple[str, List[ImgPath | ImgUrl]]: 返回说明文本和多张图片的组合
     - **注意**: 返回值必须是可序列化的，不支持复杂对象
 
     ## 参数描述解析：

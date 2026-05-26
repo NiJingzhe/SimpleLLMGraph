@@ -207,6 +207,7 @@ Do not introduce code that directly mutates `ContextState.messages` outside of `
 - TDD, tests, and validation expectations: `reference/testing-and-tdd.md`
 - Coding conventions and naming rules: `reference/style-and-spec.md`
 - Framework-specific gotchas: `reference/framework-gotchas.md`
+- PyRepl architecture, IPC, primitive RPC, event streaming, and image artifact capture: `reference/pyrepl-architecture.md`
 - Docs and examples workflow: `reference/docs-and-examples.md`
 - Maintainer workflow notes: `reference/AGENT.md`
 - Contributor guide: `reference/contributing.md`

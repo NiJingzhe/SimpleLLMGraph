@@ -34,6 +34,7 @@ Best practices:
 - The function must be `async def`.
 - Write a good docstring `Args:` section because parameter descriptions are extracted from it.
 - Keep tool outputs concise unless the full payload is truly required.
+- For multimodal outputs, return `ImgPath`, `ImgUrl`, `list[ImgPath | ImgUrl]`, `(text, ImgPath | ImgUrl)`, or `(text, list[ImgPath | ImgUrl])`.
 - Use `best_practices=[...]` when the model needs durable guidance about how to use the tool.
 - Use `too_long_to_file=True` for tools that may return massive text, such as code execution or large search results; the framework keeps roughly the first 20000 tokens in-chat and writes the full text to a temp file.
 

@@ -473,6 +473,7 @@ asyncio.run(main())
 - There is no `enable_event` or `return_mode` decorator option. Do not write old `(chunk, history)` consumers.
 - `too_long_to_file=True` keeps roughly the first 20000 tokens in chat and writes the full tool result to a temp file.
 - `PyRepl.reset()` clears REPL variables but keeps runtime backends and self-reference memory.
+- `execute_code` returns image-producing code as multimodal tool output when code uses `display(Image(...))`, returns an image-rich last expression, or returns `ImgPath` / `ImgUrl`.
 - In 0.8.1, PyRepl and SelfRef were internally split into facade/component modules, but application code should continue using the same public surfaces: `PyRepl`, `SelfReference`, `runtime.selfref.context.*`, and `runtime.selfref.fork.*`.
 - `runtime.selfref.context.compact(...)` is queued first. When called from a tool run, the compacted context is applied before the next same-turn LLM step when possible, and finalize still commits any leftover queued compaction before the turn ends.
 - `OpenAIResponsesCompatible` is a first-class adapter. It maps the selected system prompt to Responses `instructions`, supports `reasoning={...}`, and keeps Responses-specific request/stream behavior out of your decorator code.
