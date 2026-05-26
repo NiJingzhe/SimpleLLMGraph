@@ -28,6 +28,27 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, NotRequired, TypeAlias, TypedDict
 
+ChatImageDetail: TypeAlias = Literal["low", "high", "auto"]
+
+
+class ChatTextContentPart(TypedDict):
+    type: Literal["text"]
+    text: str
+
+
+class ChatImageUrl(TypedDict, total=False):
+    url: str
+    detail: ChatImageDetail
+
+
+class ChatImageUrlContentPart(TypedDict):
+    type: Literal["image_url"]
+    image_url: ChatImageUrl
+
+
+ChatContentPart: TypeAlias = ChatTextContentPart | ChatImageUrlContentPart
+ChatMessageContent: TypeAlias = str | List[ChatContentPart]
+
 # Reasoning detail 的类型定义
 class ReasoningDetail(TypedDict):
     """推理细节的类型定义（用于 Google Gemini 等模型）"""
@@ -45,7 +66,7 @@ class ExtendedMessageParam(TypedDict, total=False):
     """
     # 基础字段
     role: str
-    content: str | List[Dict[str, Any]] | None
+    content: ChatMessageContent | None
     
     # OpenAI 标准字段
     refusal: NotRequired[str | None]

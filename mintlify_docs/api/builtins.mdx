@@ -130,10 +130,13 @@ Returns:
     "stdout": str,          # Captured stdout
     "stderr": str,          # Captured stderr
     "return_value": str,    # Repr of last expression (or None)
+    "artifacts": list,      # Captured image artifacts for direct PyRepl.execute calls
     "error": str | None,    # Error message if failed
     "execution_time_ms": float,
 }
 ```
+
+When used through the agent toolset, `execute_code` returns a natural-language summary. If code outputs images through `display(Image(...))`, an image-rich last expression, or `ImgPath(...)` / `ImgUrl(...)`, the tool result becomes multimodal so the model can inspect the image.
 
 #### reset_repl
 

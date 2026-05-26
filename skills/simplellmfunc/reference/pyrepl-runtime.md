@@ -6,6 +6,7 @@ Use `PyRepl` when the model needs:
 
 - persistent Python execution across turns
 - runtime primitive discovery through `runtime.*`
+- image-producing code whose plots or `IPython.display.Image` results should be returned to the model as multimodal tool output
 - durable self-reference context
 - a forkable execution environment for sub-agents or parallel work
 

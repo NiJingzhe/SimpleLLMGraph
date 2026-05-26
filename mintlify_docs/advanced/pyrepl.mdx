@@ -15,6 +15,7 @@ In 0.8.1, `PyRepl` remains the public facade while its internals are split into 
 - **Isolated process** — Runs in a separate subprocess (multiprocessing spawn). Crashes don't kill the main process
 - **Runtime injection** — The `runtime` object is globally available. No imports needed
 - **Streaming output** — stdout/stderr stream in real-time via custom events
+- **Image artifacts** — images produced by `display(Image(...))` or image-rich last expressions are returned to the model as multimodal tool results
 - **Timeout protection** — Default 600s per execution. Configurable
 
 ## Setup
@@ -48,6 +49,40 @@ x
 ```
 
 Return value is the last expression's repr (like IPython).
+
+### Image Output
+
+When executed code produces image output, `execute_code` returns a multimodal tool result instead of flattening the image to text. The model receives the normal execution summary plus the image content.
+
+Supported patterns include explicit display calls:
+
+```python
+from IPython.display import Image, display
+
+display(Image(filename="chart.png"))
+```
+
+And image-rich last expressions:
+
+```python
+from IPython.display import Image
+
+Image(filename="chart.png")
+```
+
+For generated plots, saving the figure and returning an image payload is the clearest pattern:
+
+```python
+import matplotlib.pyplot as plt
+from SimpleLLMFunc.type import ImgPath
+
+plt.plot([1, 2, 3])
+path = "chart.png"
+plt.savefig(path)
+ImgPath(path)
+```
+
+Direct `PyRepl.execute(...)` calls expose captured images in the returned `artifacts` list. The `execute_code` tool converts those artifacts into `ImgPath` / `ImgUrl` multimodal returns for the agent loop.
 
 ### reset_repl
 

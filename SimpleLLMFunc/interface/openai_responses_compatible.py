@@ -174,12 +174,11 @@ def _messages_to_response_input(
             continue
 
         if role == "user":
-            text = "" if content is None else str(content)
             input_items.append(
                 {
                     "type": "message",
                     "role": role,
-                    "content": [{"type": "input_text", "text": text}],
+                    "content": _user_content_to_response_content(content),
                 }
             )
             continue
@@ -229,6 +228,45 @@ def _messages_to_response_input(
                 }
             )
     return input_items
+
+
+def _user_content_to_response_content(content: Any) -> list[dict[str, Any]]:
+    if isinstance(content, list):
+        converted: list[dict[str, Any]] = []
+        for part in content:
+            if not isinstance(part, dict):
+                converted.append({"type": "input_text", "text": str(part)})
+                continue
+
+            part_type = part.get("type")
+            if part_type == "text":
+                converted.append(
+                    {"type": "input_text", "text": str(part.get("text", ""))}
+                )
+                continue
+
+            if part_type == "image_url":
+                image_url = part.get("image_url")
+                if isinstance(image_url, dict):
+                    url = image_url.get("url")
+                    if isinstance(url, str) and url:
+                        image_part: dict[str, Any] = {
+                            "type": "input_image",
+                            "image_url": url,
+                            "detail": "auto",
+                        }
+                        detail = image_url.get("detail")
+                        if detail in {"low", "high", "auto"}:
+                            image_part["detail"] = detail
+                        converted.append(image_part)
+                        continue
+
+            converted.append({"type": "input_text", "text": str(part)})
+
+        return converted or [{"type": "input_text", "text": ""}]
+
+    text = "" if content is None else str(content)
+    return [{"type": "input_text", "text": text}]
 
 
 def _extract_response_instructions(

@@ -108,6 +108,32 @@ result = await answer(
 )
 ```
 
+## Multimodal Image Parameters
+
+`@llm_function` keeps the normal Python-function shape for image input: declare explicit image parameters in the function signature.
+
+```python
+from SimpleLLMFunc import llm_function
+from SimpleLLMFunc.type import ImgPath, ImgUrl, Text
+
+@llm_function(llm_interface=llm)
+async def compare_images(
+    instruction: Text,
+    reference: ImgUrl,
+    candidate: ImgPath,
+) -> str:
+    """Compare the two images according to the instruction."""
+    pass
+
+result = await compare_images(
+    Text("Explain the visual differences."),
+    ImgUrl("https://example.com/reference.jpg", detail="high"),
+    ImgPath("./candidate.png", detail="high"),
+)
+```
+
+Use `ImgUrl` for web URLs or `data:` URLs. Use `ImgPath` for local files; the framework encodes the image as a data URL before sending it to the model. Multiple images should be expressed as explicit parameters or typed lists such as `list[ImgUrl]` / `list[ImgPath]`.
+
 ## With Tools
 
 `@llm_function` can use tools via a ReAct loop:

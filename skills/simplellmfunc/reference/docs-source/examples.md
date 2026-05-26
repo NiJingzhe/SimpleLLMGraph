@@ -295,6 +295,7 @@ poetry run python examples/llm_function_token_usage.py
 
 ### 工具调用
 - **内置 REPL 工具调用**: 见 [pyrepl_example.py](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/examples/pyrepl_example.py)
+- **PyRepl 图片产物返回**: 见 [pyrepl_seaborn_multimodal_images.py](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/examples/pyrepl_seaborn_multimodal_images.py)
 - **多工具并行调用**: 见 [parallel_toolcall_example.py](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/examples/parallel_toolcall_example.py)
 - **Agent as a Tool**: 见 [agent_as_tool_example.py](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/examples/agent_as_tool_example.py)
 
@@ -306,6 +307,7 @@ poetry run python examples/llm_function_token_usage.py
 
 ### 多模态处理
 - **图片分析**: 见 [multi_modality_toolcall.py](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/examples/multi_modality_toolcall.py)
+- **多图工具返回**: 见 [pyrepl_seaborn_multimodal_images.py](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/examples/pyrepl_seaborn_multimodal_images.py)
 - **混合输入输出**: 见 [multi_modality_toolcall.py](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/examples/multi_modality_toolcall.py)
 
 ## 快速运行示例

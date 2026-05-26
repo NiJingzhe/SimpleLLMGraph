@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from SimpleLLMFunc.type.chat_input import UserChatMessage
 from SimpleLLMFunc.type.multimodal import ImgPath, ImgUrl, Text
 
 
@@ -24,6 +25,8 @@ def has_multimodal_content(
             annotation = type_hints[param_name]
             if is_multimodal_type(param_value, annotation):
                 return True
+        elif isinstance(param_value, UserChatMessage):
+            return True
     return False
 
 
@@ -32,7 +35,7 @@ def is_multimodal_type(value: Any, annotation: Any) -> bool:
 
     from typing import List as TypingList, Union, get_args, get_origin
 
-    if isinstance(value, (Text, ImgUrl, ImgPath)):
+    if isinstance(value, (Text, ImgUrl, ImgPath, UserChatMessage)):
         return True
 
     origin = get_origin(annotation)
@@ -49,13 +52,16 @@ def is_multimodal_type(value: Any, annotation: Any) -> bool:
         if not args:
             return False
         element_type = args[0]
-        if element_type in (Text, ImgUrl, ImgPath):
+        if element_type in (Text, ImgUrl, ImgPath, UserChatMessage):
             return True
         if isinstance(value, (list, tuple)):
-            return any(isinstance(item, (Text, ImgUrl, ImgPath)) for item in value)
+            return any(
+                isinstance(item, (Text, ImgUrl, ImgPath, UserChatMessage))
+                for item in value
+            )
         return False
 
-    if annotation in (Text, ImgUrl, ImgPath):
+    if annotation in (Text, ImgUrl, ImgPath, UserChatMessage):
         return True
 
     return False

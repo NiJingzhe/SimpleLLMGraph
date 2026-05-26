@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from SimpleLLMFunc.hooks.event_emitter import ToolEventEmitter
 from SimpleLLMFunc.tool import TOO_LONG_TO_FILE_MAX_TOKENS, Tool
+from SimpleLLMFunc.type.multimodal import ImgPath, ImgUrl
 
 
 EXECUTE_TOOL_DESCRIPTION = (
@@ -71,7 +72,63 @@ def format_execute_tool_output(result: Dict[str, Any]) -> str:
         if isinstance(summary, str) and summary:
             lines.append(f"error_summary: {summary}")
 
+    artifacts = result.get("artifacts")
+    if isinstance(artifacts, list) and artifacts:
+        image_count = sum(
+            1
+            for artifact in artifacts
+            if isinstance(artifact, dict) and artifact.get("type") == "image"
+        )
+        if image_count:
+            suffix = "s" if image_count != 1 else ""
+            lines.append(f"image artifacts: {image_count} image artifact{suffix}")
+
     return "\n".join(lines)
+
+
+def _image_payload_from_artifact(artifact: Dict[str, Any]) -> ImgPath | ImgUrl | None:
+    if artifact.get("type") != "image":
+        return None
+
+    detail = artifact.get("detail")
+    if detail not in {"low", "high", "auto"}:
+        detail = "auto"
+
+    url = artifact.get("url")
+    if isinstance(url, str) and url:
+        try:
+            return ImgUrl(url, detail=detail)
+        except ValueError:
+            return None
+
+    path = artifact.get("path")
+    if isinstance(path, str) and path:
+        try:
+            return ImgPath(path, detail=detail)
+        except (FileNotFoundError, ValueError):
+            return None
+
+    return None
+
+
+def build_execute_tool_return(result: Dict[str, Any]) -> str | tuple[str, List[ImgPath | ImgUrl]]:
+    summary = format_execute_tool_output(result)
+    artifacts = result.get("artifacts")
+    if not isinstance(artifacts, list):
+        return summary
+
+    images: List[ImgPath | ImgUrl] = []
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            continue
+        image = _image_payload_from_artifact(artifact)
+        if image is not None:
+            images.append(image)
+
+    if not images:
+        return summary
+
+    return summary, images
 
 
 async def execute_tool_adapter(
@@ -79,13 +136,13 @@ async def execute_tool_adapter(
     code: str,
     timeout_seconds: Optional[float] = None,
     event_emitter: Optional[ToolEventEmitter] = None,
-) -> str:
+) -> str | tuple[str, List[ImgPath | ImgUrl]]:
     result = await repl.execute(
         code,
         timeout_seconds=timeout_seconds,
         event_emitter=event_emitter,
     )
-    return format_execute_tool_output(result)
+    return build_execute_tool_return(result)
 
 
 def create_pyrepl_tools(repl: Any) -> List[Tool]:
@@ -113,6 +170,7 @@ __all__ = [
     "RESET_TOOL_BEST_PRACTICES",
     "RESET_TOOL_DESCRIPTION",
     "create_pyrepl_tools",
+    "build_execute_tool_return",
     "execute_tool_adapter",
     "format_execute_tool_output",
 ]

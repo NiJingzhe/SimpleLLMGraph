@@ -12,6 +12,7 @@ from SimpleLLMFunc.llm_decorator.chat_toolkit import (
 from SimpleLLMFunc.llm_decorator.chat_types import ToolkitList
 from SimpleLLMFunc.llm_decorator.signature import FunctionSignature, parse_function_signature
 from SimpleLLMFunc.runtime.selfref.state import SelfReference
+from SimpleLLMFunc.type.chat_input import normalize_user_chat_message
 
 
 @dataclass(frozen=True)
@@ -47,8 +48,17 @@ def build_chat_call_context(
         runtime_toolkit,
     )
 
+    task_arguments = dict(function_signature.bound_args.arguments)
+    if "message" in task_arguments:
+        try:
+            task_arguments["message"] = normalize_user_chat_message(
+                task_arguments["message"]
+            )
+        except ValueError:
+            pass
+
     user_task_prompt = json.dumps(
-        function_signature.bound_args.arguments,
+        task_arguments,
         default=str,
         ensure_ascii=False,
     )

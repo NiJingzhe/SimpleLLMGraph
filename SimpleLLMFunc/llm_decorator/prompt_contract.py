@@ -21,6 +21,10 @@ from SimpleLLMFunc.logger.logger import get_location
 from SimpleLLMFunc.runtime.selfref.state import MemoryHistory
 from SimpleLLMFunc.tool import Tool
 from SimpleLLMFunc.type import HistoryList
+from SimpleLLMFunc.type.chat_input import (
+    UserChatMessage,
+    normalize_user_chat_message,
+)
 from SimpleLLMFunc.type.message import MessageList, MessageParam, NormalizedMessageList
 
 HISTORY_PARAM_NAMES: List[str] = ["history", "chat_history"]
@@ -268,12 +272,31 @@ def extract_conversation_history(
     return custom_history
 
 
+def _extract_explicit_chat_user_message(
+    arguments: Dict[str, Any],
+    exclude_params: List[str],
+) -> Optional[Dict[str, Any]]:
+    if "message" not in arguments or "message" in exclude_params:
+        return None
+
+    value = arguments["message"]
+    if isinstance(value, UserChatMessage):
+        return value.to_message()
+    if isinstance(value, dict) and value.get("role") == "user" and "content" in value:
+        return normalize_user_chat_message(value)
+    return None
+
+
 def build_chat_user_message_content(
     arguments: Dict[str, Any],
     type_hints: Dict[str, Any],
     has_multimodal: bool,
     exclude_params: List[str],
 ) -> Union[str, List[Dict[str, Any]]]:
+    explicit_message = _extract_explicit_chat_user_message(arguments, exclude_params)
+    if explicit_message is not None:
+        return cast(Union[str, List[Dict[str, Any]]], explicit_message["content"])
+
     if has_multimodal:
         return build_multimodal_content(
             arguments,
@@ -359,6 +382,11 @@ def build_chat_messages(
         type_hints,
         exclude_params=exclude_params,
     )
+    explicit_message = _extract_explicit_chat_user_message(arguments, exclude_params)
+    if explicit_message is not None:
+        messages.append(cast(MessageParam, explicit_message))
+        return messages
+
     user_message_content = build_chat_user_message_content(
         arguments,
         type_hints,
@@ -366,7 +394,9 @@ def build_chat_messages(
         exclude_params,
     )
     if user_message_content:
-        messages.append(cast(MessageParam, {"role": "user", "content": user_message_content}))
+        messages.append(
+            cast(MessageParam, {"role": "user", "content": user_message_content})
+        )
     return messages
 
 
@@ -378,6 +408,7 @@ __all__ = [
     "build_chat_messages",
     "build_chat_system_prompt",
     "build_chat_user_message_content",
+    "_extract_explicit_chat_user_message",
     "build_function_transcript_seed",
     "build_parameter_type_descriptions",
     "build_return_type_description",

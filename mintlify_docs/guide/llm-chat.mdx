@@ -65,6 +65,32 @@ async for output in assistant("Tell me about Python", history):
 
 With `stream=False`, the model response arrives as a single `ResponseYield`.
 
+## Multimodal User Messages
+
+For multimodal chat input, use exactly one canonical user-message object: `UserChatMessage`. This keeps `@llm_chat` as an Agent abstraction over one user turn and avoids multiple competing image-parameter styles.
+
+```python
+from SimpleLLMFunc import llm_chat
+from SimpleLLMFunc.type import ImgPath, ImgUrl, UserChatMessage
+
+@llm_chat(llm_interface=llm, stream=True)
+async def vision_agent(message: UserChatMessage, history: list | None = None):
+    """Answer questions about user-provided images."""
+    pass
+
+async for output in vision_agent(
+    UserChatMessage.multimodal(
+        "Compare these images and list visible differences.",
+        ImgUrl("https://example.com/reference.jpg", detail="high"),
+        ImgPath("./candidate.png", detail="high"),
+    ),
+    history=[],
+):
+    ...
+```
+
+`UserChatMessage.multimodal(...)` accepts text plus any number of `ImgUrl` / `ImgPath` values. It normalizes them to an OpenAI-compatible user message with `text` and `image_url` content parts. Future modalities should extend `UserChatMessage`, not introduce another chat input convention.
+
 ## Tools
 
 ```python

@@ -43,8 +43,15 @@ SimpleLLMFunc supports multimodal values through:
 - `Text`
 - `ImgPath`
 - `ImgUrl`
+- `UserChatMessage` for chat-agent user turns
 
-You can use them in function parameters, tool parameters, and some tool return shapes. For user-facing application code, prefer explicit multimodal types instead of ad hoc strings that happen to contain paths or URLs.
+There is one correct shape per surface:
+
+- `@llm_function`: use explicit `ImgUrl` / `ImgPath` typed parameters, matching the normal Python-function mental model.
+- `@llm_chat`: use one canonical `message: UserChatMessage` object for multimodal user input, because a chat agent consumes one user turn.
+- `@tool`: use explicit multimodal parameter or return types such as `ImgPath`, `ImgUrl`, `list[ImgPath | ImgUrl]`, or supported tuples/lists.
+
+Prefer these typed multimodal values instead of ad hoc strings that happen to contain paths or URLs.
 
 ## History and state
 

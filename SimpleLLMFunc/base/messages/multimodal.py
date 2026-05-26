@@ -6,6 +6,10 @@ from typing import Any, Dict, List, Optional
 
 from SimpleLLMFunc.logger import push_debug, push_error, push_warning
 from SimpleLLMFunc.logger.logger import get_location
+from SimpleLLMFunc.type.chat_input import (
+    UserChatMessage,
+    normalize_user_chat_content,
+)
 from SimpleLLMFunc.type.multimodal import ImgPath, ImgUrl, Text
 
 
@@ -14,7 +18,17 @@ def handle_union_type(value: Any, args: tuple, param_name: str) -> List[Dict[str
 
     content: List[Dict[str, Any]] = []
 
-    if isinstance(value, (Text, ImgUrl, ImgPath, str)):
+    if isinstance(
+        value,
+        (Text, ImgUrl, ImgPath, UserChatMessage, str),
+    ):
+        if isinstance(value, UserChatMessage):
+            normalized = normalize_user_chat_content(value)
+            return (
+                normalized
+                if isinstance(normalized, list)
+                else [create_text_content(normalized, param_name)]
+            )
         if isinstance(value, (Text, str)):
             content.append(create_text_content(value, param_name))
         elif isinstance(value, ImgUrl):
@@ -25,8 +39,19 @@ def handle_union_type(value: Any, args: tuple, param_name: str) -> List[Dict[str
 
     if isinstance(value, (list, tuple)):
         for i, item in enumerate(value):
-            if isinstance(item, (Text, ImgUrl, ImgPath, str)):
-                if isinstance(item, (Text, str)):
+            if isinstance(
+                item,
+                (Text, ImgUrl, ImgPath, UserChatMessage, str),
+            ):
+                if isinstance(item, UserChatMessage):
+                    normalized = normalize_user_chat_content(item)
+                    if isinstance(normalized, list):
+                        content.extend(normalized)
+                    else:
+                        content.append(
+                            create_text_content(normalized, f"{param_name}[{i}]")
+                        )
+                elif isinstance(item, (Text, str)):
                     content.append(create_text_content(item, f"{param_name}[{i}]"))
                 elif isinstance(item, ImgUrl):
                     content.append(create_image_url_content(item, f"{param_name}[{i}]"))
@@ -34,7 +59,10 @@ def handle_union_type(value: Any, args: tuple, param_name: str) -> List[Dict[str
                     content.append(create_image_path_content(item, f"{param_name}[{i}]"))
             else:
                 push_error(
-                    "多模态参数只能被标注为Optional[List[Text/ImgUrl/ImgPath]] 或 Optional[Text/ImgUrl/ImgPath] 或 List[Text/ImgUrl/ImgPath] 或 Text/ImgUrl/ImgPath",
+                    "Multimodal parameters must be annotated as "
+                    "Optional[List[Text/ImgUrl/ImgPath]], "
+                    "Optional[Text/ImgUrl/ImgPath], List[Text/ImgUrl/ImgPath], "
+                    "or Text/ImgUrl/ImgPath.",
                     location=get_location(),
                 )
                 content.append(create_text_content(item, f"{param_name}[{i}]"))
@@ -88,23 +116,31 @@ def parse_multimodal_parameter(
     if origin in (list, TypingList):
         if not isinstance(value, (list, tuple)):
             push_warning(
-                f"参数 {param_name} 应为列表类型，但获得 {type(value)}",
+                f"Parameter {param_name} should be a list, got {type(value)}.",
                 location=get_location(),
             )
             return [create_text_content(value, param_name)]
 
         if not args:
             push_error(
-                f"参数 {param_name} 的List类型缺少元素类型注解",
+                f"Parameter {param_name} list annotation is missing an element type.",
                 location=get_location(),
             )
             return [create_text_content(value, param_name)]
 
         element_type = args[0]
 
-        if element_type not in (Text, ImgUrl, ImgPath, str):
+        if element_type not in (
+            Text,
+            ImgUrl,
+            ImgPath,
+            UserChatMessage,
+            str,
+        ):
             push_error(
-                f"参数 {param_name} 的List类型必须直接包裹基础类型（Text, ImgUrl, ImgPath, str），但获得 {element_type}",
+                f"Parameter {param_name} list annotation must directly wrap "
+                "Text, ImgUrl, ImgPath, UserChatMessage, or str; "
+                f"got {element_type}.",
                 location=get_location(),
             )
             return [create_text_content(value, param_name)]
@@ -123,6 +159,13 @@ def parse_multimodal_parameter(
         return [create_image_url_content(value, param_name)]
     if annotation is ImgPath:
         return [create_image_path_content(value, param_name)]
+    if annotation is UserChatMessage:
+        normalized = normalize_user_chat_content(value)
+        return (
+            normalized
+            if isinstance(normalized, list)
+            else [create_text_content(normalized, param_name)]
+        )
 
     return [create_text_content(value, param_name)]
 

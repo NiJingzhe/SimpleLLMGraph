@@ -370,16 +370,18 @@ async def generate_chart(data: str, chart_type: str = "bar") -> ImgPath:
 
 `@tool` 可以与 `@llm_function` 叠加在同一个函数上。
 
+工具也可以返回多张图片并附带可选文本，例如 `tuple[str, list[ImgPath | ImgUrl]]`。当 PyRepl 的 `execute_code` 代码通过 `display(Image(...))` 或图片型最后表达式输出图片时，也会走这条多模态返回链路。
+
 ### 多模态支持
 
 ```python
-from SimpleLLMFunc.type import ImgPath, ImgUrl, Text
+from SimpleLLMFunc.type import UserChatMessage, ImgPath, ImgUrl, Text
 
 @llm_function(llm_interface=llm)
 async def analyze_image(
     description: Text,        # 文本描述
-    web_image: ImgUrl,        # 网络图片 URL
-    local_image: ImgPath      # 本地图片路径
+    web_image: ImgUrl,        # 网络图片 URL 或 data: URL
+    local_image: ImgPath      # 本地图片路径，会编码为 data URL
 ) -> str:
     """根据描述分析图像"""
     pass
@@ -389,7 +391,23 @@ result = await analyze_image(
     web_image=ImgUrl("https://example.com/image.jpg"),
     local_image=ImgPath("./reference.jpg")
 )
+
+@llm_chat(llm_interface=llm)
+async def vision_agent(message: UserChatMessage, history=None):
+    """回答用户多模态消息中的问题。"""
+    pass
+
+async for output in vision_agent(
+    UserChatMessage.multimodal(
+        "这张图里有什么？",
+        ImgUrl("https://example.com/cat.jpg", detail="high"),
+    ),
+    history=[],
+):
+    ...
 ```
+
+`llm_function` 保持普通 Python 函数风格：通过显式声明 `ImgUrl` / `ImgPath` / 对应列表参数传入图片。`llm_chat` 则接受显式的 OpenAI-compatible `UserChatMessage`，让 Agent 可以在同一条 user message 中接收文本与图片内容。
 
 ### 工具调用上限默认值
 

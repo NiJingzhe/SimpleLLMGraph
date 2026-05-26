@@ -1,5 +1,14 @@
 # Change log for SimpleLLMFunc
 
+## Unreleased
+
+### ✨ New Features
+
+1. **Multimodal input support**:
+   - `llm_function` now supports typed image input through explicit `ImgUrl` / `ImgPath` parameters and lists/unions containing those types.
+   - `llm_chat` now accepts `UserChatMessage` for OpenAI-compatible multimodal user messages containing text and `image_url` content parts.
+   - Added `UserChatMessage.multimodal(...)`, the canonical `UserChatMessage` helper for ergonomic chat message construction.
+
 ## 0.8.1 (2026-05-20) - Architecture Split: PyRepl, SelfRef, and Chat Decorator Internals
 
 ### 🔧 Improvements

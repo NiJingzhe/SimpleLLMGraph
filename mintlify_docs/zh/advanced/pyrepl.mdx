@@ -13,6 +13,7 @@ PyRepl 是一个运行在子进程中的持久化 IPython REPL。它为模型提
 - **进程隔离** —— 运行在独立子进程中（multiprocessing spawn）。崩溃不会影响主进程
 - **运行时注入** —— `runtime` 对象全局可用，无需导入
 - **流式输出** —— stdout/stderr 通过自定义事件实时流式传输
+- **图片产物** —— `display(Image(...))` 或最后表达式产生的图片会作为多模态工具结果返回给模型
 - **超时保护** —— 每次执行默认 600 秒超时，可配置
 
 ## 设置
@@ -46,6 +47,40 @@ x
 ```
 
 返回值是最后一个表达式的 repr（与 IPython 行为一致）。
+
+### 图片输出
+
+当执行代码产生图片输出时，`execute_code` 会返回多模态工具结果，而不是把图片压平成文本。模型会同时收到正常的执行摘要和图片内容。
+
+支持显式 display 调用：
+
+```python
+from IPython.display import Image, display
+
+display(Image(filename="chart.png"))
+```
+
+也支持最后表达式为可渲染图片对象：
+
+```python
+from IPython.display import Image
+
+Image(filename="chart.png")
+```
+
+对于生成图表，最清晰的模式是保存图片并返回图片 payload：
+
+```python
+import matplotlib.pyplot as plt
+from SimpleLLMFunc.type import ImgPath
+
+plt.plot([1, 2, 3])
+path = "chart.png"
+plt.savefig(path)
+ImgPath(path)
+```
+
+直接调用 `PyRepl.execute(...)` 时，捕获到的图片会出现在返回值的 `artifacts` 列表里。作为 agent 工具使用的 `execute_code` 会把这些 artifact 转成 `ImgPath` / `ImgUrl` 多模态返回。
 
 ### reset_repl
 

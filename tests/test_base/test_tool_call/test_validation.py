@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
-import pytest
-
 from SimpleLLMFunc.base.tool_call.validation import (
     is_valid_tool_result,
     serialize_tool_output_for_langfuse,
@@ -39,6 +35,15 @@ class TestIsValidToolResult:
     def test_valid_tuple_with_image(self, img_url: ImgUrl) -> None:
         """Test tuple with image validation."""
         result = ("text", img_url)
+        assert is_valid_tool_result(result) is True
+
+    def test_valid_tuple_with_multiple_images(
+        self,
+        img_path: ImgPath,
+        img_url: ImgUrl,
+    ) -> None:
+        """Test tuple with multiple images validation."""
+        result = ("text", [img_url, img_path])
         assert is_valid_tool_result(result) is True
 
     def test_invalid_tuple(self) -> None:
@@ -87,6 +92,17 @@ class TestSerializeToolOutputForLangfuse:
         assert result["text"] == "text"
         assert "image" in result
 
+    def test_serialize_tuple_with_multiple_images(
+        self,
+        img_path: ImgPath,
+        img_url: ImgUrl,
+    ) -> None:
+        """Test serializing tuple with multiple images."""
+        result = serialize_tool_output_for_langfuse(("text", [img_url, img_path]))
+        assert result["type"] == "text_with_images"
+        assert result["text"] == "text"
+        assert len(result["images"]) == 2
+
     def test_serialize_dict(self) -> None:
         """Test serializing dict."""
         data = {"key": "value", "number": 123}
@@ -108,4 +124,3 @@ class TestSerializeToolOutputForLangfuse:
         obj = NonSerializable()
         result = serialize_tool_output_for_langfuse(obj)
         assert result == "non-serializable"
-

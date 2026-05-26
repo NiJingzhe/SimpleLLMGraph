@@ -2,6 +2,12 @@
 # 消息类型
 # ============================================================================
 from SimpleLLMFunc.type.message import (
+    ChatContentPart,
+    ChatImageDetail,
+    ChatImageUrl,
+    ChatImageUrlContentPart,
+    ChatMessageContent,
+    ChatTextContentPart,
     MessageList,
     MessageParam,
     NormalizedMessageList,
@@ -19,6 +25,14 @@ from SimpleLLMFunc.type.multimodal import (
     Text,
     MultimodalContent,
     MultimodalList,
+)
+from SimpleLLMFunc.type.chat_input import (
+    UserChatContent,
+    UserChatContentInput,
+    UserChatContentPart,
+    UserChatMessage,
+    normalize_user_chat_content,
+    normalize_user_chat_message,
 )
 
 # ============================================================================
@@ -71,6 +85,12 @@ __all__ = [
     "MessageList",
     "NormalizedMessageParam",
     "NormalizedMessageList",
+    "ChatContentPart",
+    "ChatImageDetail",
+    "ChatImageUrl",
+    "ChatImageUrlContentPart",
+    "ChatMessageContent",
+    "ChatTextContentPart",
     "ReasoningDetail",
     "ExtendedMessageParam",
     # 多模态类型
@@ -79,6 +99,12 @@ __all__ = [
     "ImgPath",
     "MultimodalContent",
     "MultimodalList",
+    "UserChatContent",
+    "UserChatContentInput",
+    "UserChatContentPart",
+    "UserChatMessage",
+    "normalize_user_chat_content",
+    "normalize_user_chat_message",
     # 工具调用类型
     "ToolCall",
     "ToolCallFunction",

@@ -408,6 +408,32 @@ class TestPyReplToolsetOutput:
         assert "stdout:" in result
         assert "hello" in result
 
+    @pytest.mark.asyncio
+    async def test_execute_tool_returns_multimodal_output_for_image_artifact(self):
+        from SimpleLLMFunc.builtin import PyRepl
+        from SimpleLLMFunc.type import ImgPath
+
+        repl = PyRepl()
+        execute_tool = next(
+            tool for tool in repl.toolset if tool.name == "execute_code"
+        )
+
+        result = await execute_tool.run(
+            """
+from IPython.display import Image
+Image(data=b'fake image data', format='png')
+"""
+        )
+
+        assert isinstance(result, tuple)
+        summary, images = result
+        assert isinstance(summary, str)
+        assert "Execution succeeded" in summary
+        assert "image artifact" in summary
+        assert isinstance(images, list)
+        assert len(images) == 1
+        assert isinstance(images[0], ImgPath)
+
 
 class TestPyReplExecute:
     """Test PyRepl execute functionality."""
@@ -466,6 +492,66 @@ class TestPyReplExecute:
 
         assert result["success"] is True
         assert result["return_value"] == "2"
+
+    @pytest.mark.asyncio
+    async def test_execute_expression_image_result_records_artifact(self):
+        """Expression display images should be returned as structured artifacts."""
+        from SimpleLLMFunc.builtin import PyRepl
+
+        repl = PyRepl()
+        result = await repl.execute(
+            """
+from IPython.display import Image
+Image(data=b'fake image data', format='png')
+"""
+        )
+
+        assert result["success"] is True, result["error"] or result["stderr"]
+        assert result["return_value"] is None
+        artifacts = result["artifacts"]
+        assert len(artifacts) == 1
+        assert artifacts[0]["type"] == "image"
+        assert artifacts[0]["mime_type"] == "image/png"
+        assert Path(artifacts[0]["path"]).exists()
+
+    @pytest.mark.asyncio
+    async def test_execute_display_image_call_records_artifact(self):
+        """Explicit display(Image(...)) calls should be returned as artifacts."""
+        from SimpleLLMFunc.builtin import PyRepl
+
+        repl = PyRepl()
+        result = await repl.execute(
+            """
+from IPython.display import Image, display
+display(Image(data=b'fake image data', format='png'))
+"""
+        )
+
+        assert result["success"] is True, result["error"] or result["stderr"]
+        artifacts = result["artifacts"]
+        assert len(artifacts) == 1
+        assert artifacts[0]["type"] == "image"
+        assert artifacts[0]["mime_type"] == "image/png"
+        assert Path(artifacts[0]["path"]).exists()
+
+    @pytest.mark.asyncio
+    async def test_execute_display_mixed_content_preserves_text_output(self):
+        """display(Image(...), text) should capture images and keep text display."""
+        from SimpleLLMFunc.builtin import PyRepl
+
+        repl = PyRepl()
+        result = await repl.execute(
+            """
+from IPython.display import Image, display
+display(Image(data=b'fake image data', format='png'), "keep text")
+"""
+        )
+
+        assert result["success"] is True, result["error"] or result["stderr"]
+        assert "keep text" in result["stdout"]
+        artifacts = result["artifacts"]
+        assert len(artifacts) == 1
+        assert artifacts[0]["type"] == "image"
 
     @pytest.mark.asyncio
     async def test_execute_runtime_error_includes_structured_details(self):
@@ -1167,7 +1253,6 @@ class TestPyReplRuntimePrimitives:
     def test_registered_primitive_specs_match_handler_signatures(self):
         """Declared primitive parameter kinds should match handler signatures."""
         from SimpleLLMFunc.builtin import PyRepl
-        from SimpleLLMFunc.runtime.selfref import SelfReference
 
         kind_map = {
             inspect.Parameter.POSITIONAL_ONLY: "positional_only",

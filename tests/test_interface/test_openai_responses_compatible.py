@@ -378,6 +378,49 @@ async def test_chat_maps_system_messages_to_instructions() -> None:
 
 
 @pytest.mark.asyncio
+async def test_chat_maps_multimodal_user_content_to_responses_input() -> None:
+    llm = _build_llm()
+    response = _make_text_response("ok")
+    create_mock = AsyncMock(return_value=response)
+    fake_client = SimpleNamespace(responses=SimpleNamespace(create=create_mock))
+    llm._get_or_create_client = AsyncMock(return_value=fake_client)
+
+    await llm.chat(
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What is in this image?"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "https://example.com/cat.png",
+                            "detail": "high",
+                        },
+                    },
+                ],
+            }
+        ]
+    )
+
+    request_input = create_mock.await_args.kwargs["input"]
+    assert request_input == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "What is in this image?"},
+                {
+                    "type": "input_image",
+                    "image_url": "https://example.com/cat.png",
+                    "detail": "high",
+                },
+            ],
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_chat_maps_assistant_tool_calls_to_function_call_items() -> None:
     llm = _build_llm()
     response = _make_text_response("ok")

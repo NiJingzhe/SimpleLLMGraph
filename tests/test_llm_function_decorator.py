@@ -11,6 +11,7 @@ import pytest
 
 from SimpleLLMFunc import LLMFunction, llm_function
 from SimpleLLMFunc.hooks.stream import ResponseYield
+from SimpleLLMFunc.type import ImgUrl
 from SimpleLLMFunc.observability.langfuse_client import (
     langfuse_client as shared_langfuse_client,
 )
@@ -198,6 +199,60 @@ async def test_llm_function_passes_none_max_tool_calls_to_react_loop() -> None:
     assert inspect.iscoroutinefunction(summarize)
     assert inspect.signature(summarize) == inspect.signature(summarize.__wrapped__)
     mock_parse.assert_called_once_with(raw_response, str)
+
+
+@pytest.mark.asyncio
+async def test_llm_function_builds_multimodal_input_from_typed_image_params() -> None:
+    captured: dict[str, Any] = {}
+    raw_response = object()
+
+    async def fake_react_loop(*args: Any, **kwargs: Any):
+        _ = args
+        captured["messages"] = kwargs["messages"]
+        captured["user_task_prompt"] = kwargs["user_task_prompt"]
+        yield ResponseYield(type="response", response=raw_response, messages=[])
+
+    mock_llm = MagicMock()
+    mock_llm.model_name = "test-model"
+
+    with (
+        patch(
+            "SimpleLLMFunc.llm_decorator.llm_function_decorator.ReAct_loop",
+            new=fake_react_loop,
+        ),
+        patch(
+            "SimpleLLMFunc.llm_decorator.llm_function_decorator.process_response",
+            return_value="parsed-result",
+        ),
+        patch(
+            "SimpleLLMFunc.llm_decorator.llm_function_decorator.langfuse_client.start_as_current_observation",
+            return_value=_DummyObservation(),
+        ),
+    ):
+
+        @llm_function(llm_interface=mock_llm)
+        async def analyze_image(instruction: str, image: ImgUrl) -> str:
+            """Analyze the provided image."""
+
+        result = await analyze_image(
+            "describe it",
+            ImgUrl("https://example.com/image.png", detail="high"),
+        )
+
+    assert result == "parsed-result"
+    user_message = captured["messages"][1]
+    assert user_message["role"] == "user"
+    assert user_message["content"] == [
+        {"type": "text", "text": "instruction: describe it"},
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "https://example.com/image.png",
+                "detail": "high",
+            },
+        },
+    ]
+    assert '"image": "https://example.com/image.png"' in captured["user_task_prompt"]
 
 
 @pytest.mark.asyncio

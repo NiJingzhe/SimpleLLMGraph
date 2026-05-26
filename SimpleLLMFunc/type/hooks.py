@@ -143,8 +143,11 @@ ToolResult = Union[
     List[Any],                # 数组
     ImgPath,                  # 本地图片
     ImgUrl,                   # 图片 URL
+    List[ImgPath],            # 本地图片列表
+    List[ImgUrl],             # 图片 URL 列表
     Tuple[str, ImgPath],      # 文本 + 本地图片
     Tuple[str, ImgUrl],       # 文本 + 图片 URL
+    Tuple[str, List[Union[ImgPath, ImgUrl]]],  # 文本 + 多张图片
     Text,                     # 文本包装类
 ]
 """
@@ -153,7 +156,7 @@ ToolResult = Union[
 支持的类型：
 - 基本类型：str, dict, list
 - 多模态类型：ImgPath, ImgUrl, Text
-- 组合类型：(str, ImgPath), (str, ImgUrl)
+- 组合类型：(str, ImgPath), (str, ImgUrl), (str, list[ImgPath | ImgUrl])
 """
 
 # ============================================================================

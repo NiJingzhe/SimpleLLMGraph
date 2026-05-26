@@ -7,19 +7,23 @@ Parent/worker communication is message-based via multiprocessing queues.
 from __future__ import annotations
 
 import ast
+import base64
 import builtins
 import io
 import linecache
 import os
 import queue
 import sys
+import tempfile
 import time
 import traceback
 import uuid
 from typing import Any, Callable, Optional
 
+import IPython.display as ipython_display
 from IPython.core.interactiveshell import InteractiveShell
 from SimpleLLMFunc.runtime.worker_proxy import WorkerRuntimeProxy
+from SimpleLLMFunc.type.multimodal import ImgPath, ImgUrl
 
 
 EVENT_STDOUT = "stdout"
@@ -332,7 +336,179 @@ class _PyReplWorker:
         error_message = str(command.get("error_message", "primitive call failed"))
         raise self._make_remote_error(error_type, error_message)
 
-    def _execute_python_code(self, code: str, filename: str) -> Optional[str]:
+    @staticmethod
+    def _image_suffix_for_mime_type(mime_type: str) -> str:
+        return {
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/gif": ".gif",
+            "image/bmp": ".bmp",
+            "image/webp": ".webp",
+        }.get(mime_type, ".png")
+
+    @staticmethod
+    def _image_mime_type_for_repr_method(method_name: str) -> str:
+        return {
+            "_repr_png_": "image/png",
+            "_repr_jpeg_": "image/jpeg",
+            "_repr_svg_": "image/svg+xml",
+        }.get(method_name, "image/png")
+
+    @staticmethod
+    def _coerce_image_data_to_bytes(data: Any) -> Optional[bytes]:
+        if isinstance(data, bytes):
+            return data
+        if isinstance(data, bytearray):
+            return bytes(data)
+        if isinstance(data, str):
+            try:
+                return base64.b64decode(data, validate=True)
+            except Exception:
+                return data.encode("utf-8")
+        return None
+
+    def _write_image_artifact(
+        self,
+        *,
+        data: Any,
+        mime_type: str,
+        source: str,
+    ) -> Optional[dict[str, Any]]:
+        if mime_type == "image/svg+xml":
+            return None
+
+        image_bytes = self._coerce_image_data_to_bytes(data)
+        if image_bytes is None:
+            return None
+
+        suffix = self._image_suffix_for_mime_type(mime_type)
+        fd, path = tempfile.mkstemp(prefix="pyrepl_image_", suffix=suffix)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(image_bytes)
+
+        return {
+            "type": "image",
+            "source": source,
+            "path": path,
+            "mime_type": mime_type,
+            "detail": "auto",
+        }
+
+    def _artifact_from_mime_bundle(
+        self,
+        data: Any,
+        *,
+        source: str,
+    ) -> Optional[dict[str, Any]]:
+        if not isinstance(data, dict):
+            return None
+
+        for mime_type in ("image/png", "image/jpeg", "image/gif", "image/bmp", "image/webp"):
+            if mime_type not in data:
+                continue
+            return self._write_image_artifact(
+                data=data[mime_type],
+                mime_type=mime_type,
+                source=source,
+            )
+        return None
+
+    @staticmethod
+    def _artifact_from_img_url(value: ImgUrl) -> dict[str, Any]:
+        return {
+            "type": "image",
+            "source": "return_value",
+            "url": value.url,
+            "detail": value.detail,
+        }
+
+    @staticmethod
+    def _artifact_from_img_path(value: ImgPath) -> dict[str, Any]:
+        path = value.path.expanduser().resolve()
+        return {
+            "type": "image",
+            "source": "return_value",
+            "path": str(path),
+            "mime_type": value.get_mime_type(),
+            "detail": value.detail,
+        }
+
+    def _capture_result_artifact(
+        self,
+        result: Any,
+        artifacts: list[dict[str, Any]],
+    ) -> bool:
+        if isinstance(result, ImgUrl):
+            artifacts.append(self._artifact_from_img_url(result))
+            return True
+
+        if isinstance(result, ImgPath):
+            artifacts.append(self._artifact_from_img_path(result))
+            return True
+
+        for method_name in ("_repr_png_", "_repr_jpeg_"):
+            repr_method = getattr(result, method_name, None)
+            if not callable(repr_method):
+                continue
+            try:
+                image_data = repr_method()
+            except Exception:
+                continue
+            if image_data is None:
+                continue
+            artifact = self._write_image_artifact(
+                data=image_data,
+                mime_type=self._image_mime_type_for_repr_method(method_name),
+                source="return_value",
+            )
+            if artifact is not None:
+                artifacts.append(artifact)
+                return True
+
+        try:
+            data, _metadata = self._shell.display_formatter.format(result)
+        except Exception:
+            data = None
+        artifact = self._artifact_from_mime_bundle(data, source="return_value")
+        if artifact is not None:
+            artifacts.append(artifact)
+            return True
+
+        return False
+
+    def _execute_python_code(
+        self,
+        code: str,
+        filename: str,
+    ) -> tuple[Optional[str], list[dict[str, Any]]]:
+        artifacts: list[dict[str, Any]] = []
+        display_pub = self._shell.display_pub
+        old_publish = display_pub.publish
+        old_display = ipython_display.display
+        namespace_display_was_present = "display" in self._namespace
+        old_namespace_display = self._namespace.get("display")
+
+        def publish_hook(
+            data: Any,
+            metadata: Any = None,
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            artifact = self._artifact_from_mime_bundle(data, source="display_data")
+            if artifact is not None:
+                artifacts.append(artifact)
+            return old_publish(data, metadata, *args, **kwargs)
+
+        def display_hook(*objs: Any, **kwargs: Any) -> None:
+            passthrough_objs = []
+            for obj in objs:
+                if self._capture_result_artifact(obj, artifacts):
+                    continue
+                passthrough_objs.append(obj)
+            if not passthrough_objs:
+                return None
+            return old_display(*passthrough_objs, **kwargs)
+
         transformed_code = self._shell.transform_cell(code)
         module_ast = ast.parse(transformed_code, filename=filename, mode="exec")
         body_nodes = list(module_ast.body)
@@ -341,28 +517,44 @@ class _PyReplWorker:
         if body_nodes and isinstance(body_nodes[-1], ast.Expr):
             last_expression = body_nodes.pop().value
 
-        if body_nodes:
-            module_for_exec = ast.Module(body=body_nodes, type_ignores=[])
-            ast.fix_missing_locations(module_for_exec)
-            exec(
-                compile(module_for_exec, filename, "exec"),
+        display_pub.publish = publish_hook
+        ipython_display.display = display_hook
+        if self._namespace.get("display") is old_display:
+            self._namespace["display"] = display_hook
+        try:
+            if body_nodes:
+                module_for_exec = ast.Module(body=body_nodes, type_ignores=[])
+                ast.fix_missing_locations(module_for_exec)
+                exec(
+                    compile(module_for_exec, filename, "exec"),
+                    self._namespace,
+                    self._namespace,
+                )
+
+            if last_expression is None:
+                return None, artifacts
+
+            expression_for_eval = ast.Expression(body=last_expression)
+            ast.fix_missing_locations(expression_for_eval)
+            result = eval(
+                compile(expression_for_eval, filename, "eval"),
                 self._namespace,
                 self._namespace,
             )
+            if result is None:
+                return None, artifacts
+            if self._capture_result_artifact(result, artifacts):
+                return None, artifacts
+            return repr(result), artifacts
+        finally:
+            display_pub.publish = old_publish
+            ipython_display.display = old_display
+            if self._namespace.get("display") is display_hook:
+                if namespace_display_was_present:
+                    self._namespace["display"] = old_namespace_display
+                else:
+                    self._namespace["display"] = old_display
 
-        if last_expression is None:
-            return None
-
-        expression_for_eval = ast.Expression(body=last_expression)
-        ast.fix_missing_locations(expression_for_eval)
-        result = eval(
-            compile(expression_for_eval, filename, "eval"),
-            self._namespace,
-            self._namespace,
-        )
-        if result is None:
-            return None
-        return repr(result)
 
     def _handle_execute(self, command: dict[str, Any]) -> None:
         exec_id = str(command.get("exec_id", ""))
@@ -386,6 +578,7 @@ class _PyReplWorker:
         error_message: Optional[str] = None
         error_details: Optional[dict[str, Any]] = None
         return_value: Optional[str] = None
+        artifacts: list[dict[str, Any]] = []
 
         old_stdout = sys.stdout
         old_stderr = sys.stderr
@@ -443,7 +636,10 @@ class _PyReplWorker:
         builtins.input = input_hook
 
         try:
-            return_value = self._execute_python_code(code=code, filename=filename)
+            return_value, artifacts = self._execute_python_code(
+                code=code,
+                filename=filename,
+            )
         except _InputRequestTimeoutError as exc:
             error_message = str(exc)
             on_stderr(error_message + "\n")
@@ -497,6 +693,7 @@ class _PyReplWorker:
             exec_id=exec_id,
             success=error_message is None,
             return_value=return_value,
+            artifacts=artifacts,
             error=error_message,
             error_details=error_details,
         )

@@ -35,6 +35,7 @@ This is critical for writing good prompts in SimpleLLMFunc: your docstring is im
   - plain-text or XML output constraints depending on the return type
 - If tools are mounted, the framework prepends a deduplicated `<tool_best_practices>` block before the main system prompt.
 - Runtime argument values are not put in the system prompt; they go into the user prompt.
+- For image input, keep the function-like style: declare explicit parameters as `ImgUrl`, `ImgPath`, or lists/unions of those types. Use `ImgUrl` for web/data URLs and `ImgPath` for local files.
 
 Write `llm_function` docstrings as task policy, quality bar, constraints, and style guidance. Do not waste docstring space restating parameter schemas or low-level output formatting that the framework already injects.
 
@@ -45,6 +46,7 @@ Write `llm_function` docstrings as task policy, quality bar, constraints, and st
 - Then the framework prepends `<tool_best_practices>` when tools exist.
 - Then it appends a `<must_principles>` block that tells the model to use native structured tool calls instead of writing fake tool calls in assistant text.
 - Current turn data is added as the user message, not merged into the system prompt.
+- For multimodal user turns, prefer `message: UserChatMessage` and construct content with `UserChatMessage.multimodal("text", ImgUrl(...), ImgPath(...))`. This keeps `llm_chat` as an Agent abstraction over one explicit user message instead of many loosely named image parameters.
 
 Write `llm_chat` docstrings as stable assistant policy and long-lived behavior. Put current task content in the function call arguments, not in the docstring.
 
@@ -471,6 +473,7 @@ asyncio.run(main())
 - There is no `enable_event` or `return_mode` decorator option. Do not write old `(chunk, history)` consumers.
 - `too_long_to_file=True` keeps roughly the first 20000 tokens in chat and writes the full tool result to a temp file.
 - `PyRepl.reset()` clears REPL variables but keeps runtime backends and self-reference memory.
+- `execute_code` returns image-producing code as multimodal tool output when code uses `display(Image(...))`, returns an image-rich last expression, or returns `ImgPath` / `ImgUrl`.
 - In 0.8.1, PyRepl and SelfRef were internally split into facade/component modules, but application code should continue using the same public surfaces: `PyRepl`, `SelfReference`, `runtime.selfref.context.*`, and `runtime.selfref.fork.*`.
 - `runtime.selfref.context.compact(...)` is queued first. When called from a tool run, the compacted context is applied before the next same-turn LLM step when possible, and finalize still commits any leftover queued compaction before the turn ends.
 - `OpenAIResponsesCompatible` is a first-class adapter. It maps the selected system prompt to Responses `instructions`, supports `reasoning={...}`, and keeps Responses-specific request/stream behavior out of your decorator code.

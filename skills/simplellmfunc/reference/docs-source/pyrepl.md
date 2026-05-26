@@ -7,6 +7,7 @@ SimpleLLMFunc 提供内置的 PyRepl 支持，允许 LLM 在一个连续上下�
 - **IPython 子进程后端**：每个 `PyRepl` 实例对应一个独立子进程，内部运行 `IPython InteractiveShell`
 - **连续上下文**：变量在多次调用间持久化，LLM 可以分步执行任务
 - **实时流式输出**：通过 `event_emitter` 实时获取 stdout/stderr 输出
+- **图片产物返回**：`display(Image(...))` 或最后表达式产生的图片会被捕获为多模态工具返回
 - **异步不阻塞**：代码执行在独立线程运行，不阻塞主事件循环（适合 TUI/流式 UI）
 - **Session 隔离**：不同的 PyRepl 实例相互独立，互不影响
 - **完整工具集**：提供 execute_code、reset_repl 等工具
@@ -98,11 +99,46 @@ async def chat2(message: str, history=None):
     "stdout": str,                # 标准输出
     "stderr": str,                # 标准错误
     "return_value": Any,          # 最后表达式的值
+    "artifacts": list[dict],      # 图片等执行产物（execute_code 工具会转成多模态返回）
     "error": str | None,          # 错误信息（可直接定位到输入代码行）
     "error_details": dict | None, # 结构化错误详情（行号/列号/代码片段/指针等）
     "execution_time_ms": float    # 执行时间（毫秒）
 }
 ```
+
+### 图片输出
+
+当代码输出图片时，作为 Agent 工具使用的 `execute_code` 会返回多模态工具结果：模型会看到执行摘要，也会看到图片内容。
+
+推荐写法：
+
+```python
+from IPython.display import Image, display
+
+display(Image(filename="chart.png"))
+```
+
+或把图片对象作为最后表达式：
+
+```python
+from IPython.display import Image
+
+Image(filename="chart.png")
+```
+
+生成图表时，保存文件并显式返回 `ImgPath` 最清晰：
+
+```python
+import matplotlib.pyplot as plt
+from SimpleLLMFunc.type import ImgPath
+
+plt.plot([1, 2, 3])
+path = "chart.png"
+plt.savefig(path)
+ImgPath(path)
+```
+
+直接调用 `await repl.execute(...)` 时，图片会出现在返回 dict 的 `artifacts` 列表中；经由 `execute_code` 工具调用时，框架会自动把 artifact 转成 `ImgPath` / `ImgUrl` 多模态返回。
 
 ### 错误定位增强
 
@@ -558,5 +594,6 @@ print(result)  # "REPL 已重置，所有变量已清除"
 ## Related Links
 
 - Example: `examples/pyrepl_example.py`
+- Image artifact example: `examples/pyrepl_seaborn_multimodal_images.py`
 - Local runtime memory demo: `examples/runtime_primitives_basic_example.py`
 - General TUI agent demo: `examples/tui_general_agent_example.py` (workspace scoped to `./sandbox`)

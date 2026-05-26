@@ -22,6 +22,8 @@ from SimpleLLMFunc import llm_function
 
 Transforms an async function into an `LLMFunction` callable instance. `await fn(...)` returns the parsed typed result; `fn.stream(...)` yields `ReactOutput`.
 
+For multimodal input, keep the normal Python-function style: explicitly type image parameters as `ImgUrl`, `ImgPath`, or lists/unions containing those types. `ImgUrl` accepts `http(s)` URLs and `data:` URLs; `ImgPath` is encoded as an image data URL at the provider boundary.
+
 ### Parameters
 
 | Parameter | Type | Default | Description |
@@ -83,6 +85,8 @@ from SimpleLLMFunc import llm_chat
 
 Creates an `LLMChat` callable instance. Calling it yields `AsyncGenerator[ReactOutput, None]` and gives SelfRef a stable agent identity.
 
+For multimodal chat input, prefer a single explicit `message: UserChatMessage` argument. `UserChatMessage` is OpenAI Chat Completions-compatible and can contain text and `image_url` content parts.
+
 ### Parameters
 
 | Parameter | Type | Default | Description |
@@ -129,6 +133,27 @@ async for output in agent("What is SimpleLLMFunc?", history):
     if is_response_yield(output):
         print(output.response)
         history = output.messages
+```
+
+### Multimodal Chat Example
+
+```python
+from SimpleLLMFunc import llm_chat
+from SimpleLLMFunc.type import UserChatMessage, ImgUrl
+
+@llm_chat(llm_interface=llm)
+async def vision_agent(message: UserChatMessage, history: list | None = None):
+    """Answer questions about user-provided images."""
+    pass
+
+async for output in vision_agent(
+    UserChatMessage.multimodal(
+        "What is in this image?",
+        ImgUrl("https://example.com/cat.jpg", detail="high"),
+    ),
+    history=[],
+):
+    ...
 ```
 
 ---

@@ -317,10 +317,11 @@ SimpleLLMFunc/
 
 **子模块**:
 
-- `message.py`: 消息类型
+- `message.py`: 消息类型与 OpenAI-compatible content part 类型
+- `chat_input.py`: `UserChatMessage` canonical chat user input object
 - `tool_call.py`: 工具调用类型
 - `llm.py`: LLM 相关类型
-- `multimodal.py`: 多模态类型
+- `multimodal.py`: 多模态基础类型（`Text` / `ImgUrl` / `ImgPath`）
 - `hooks.py`: 事件相关类型
 
 ### logger 模块

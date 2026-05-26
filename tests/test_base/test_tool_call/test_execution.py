@@ -125,6 +125,35 @@ class TestExecuteSingleToolCallResult:
         assert result.messages[0]["role"] == "user"
 
     @pytest.mark.asyncio
+    async def test_execute_tuple_with_multiple_images_result(
+        self,
+        img_path: ImgPath,
+        img_url: ImgUrl,
+    ) -> None:
+        tool_call = {
+            "id": "call_123",
+            "type": "function",
+            "function": {"name": "test_tool", "arguments": "{}"},
+        }
+        tool_map = {"test_tool": AsyncMock(return_value=("text", [img_url, img_path]))}
+
+        result = await execute_single_tool_call_result(tool_call, tool_map)
+
+        assert result.is_multimodal is True
+        assert len(result.messages) == 1
+        assert result.messages[0]["role"] == "user"
+        content = result.messages[0]["content"]
+        assert isinstance(content, list)
+        assert content[0] == {
+            "type": "text",
+            "text": "This is images and description returned by tool 'test_tool': text",
+        }
+        image_parts = [part for part in content if part.get("type") == "image_url"]
+        assert len(image_parts) == 2
+        assert image_parts[0]["image_url"]["url"] == img_url.url
+        assert image_parts[1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+    @pytest.mark.asyncio
     async def test_execute_tool_not_found(self) -> None:
         tool_call = {
             "id": "call_123",

@@ -159,6 +159,7 @@ logs/
 **/log_indices/
 **/*.log
 examples/testlog/
+examples/_generated/
 
 examples/provider.json
 examples/**/provider.json
@@ -171,6 +172,7 @@ testlogs/
 coverage*
 htmlcov/
 .claude/
+.qoder/
 draft/
 
 

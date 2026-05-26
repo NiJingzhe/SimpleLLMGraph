@@ -41,6 +41,7 @@ These are copied from the repo's main `examples/` directory to ground the skill 
 - `response_api_example.py`
 - `tui_chat_example.py`
 - `pyrepl_example.py`
+- `pyrepl_seaborn_multimodal_images.py`
 - `event_stream_chatbot.py`
 - `custom_tool_event_example.py`
 - `agent_as_tool_example.py`

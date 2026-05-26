@@ -35,7 +35,9 @@ SimpleLLMFunc 的工具系统为大语言模型提供了调用外部函数和 AP
 #### 多模态返回类型
 - **图片URL (`ImgUrl`)**: 返回网络图片链接，LLM 可以"看到"图片内容
 - **本地图片 (`ImgPath`)**: 返回本地图片文件路径，自动转换为 base64 格式
+- **多张图片 (`List[ImgPath | ImgUrl]`)**: 同一次工具调用返回多张图片
 - **文本+图片组合 (`Tuple[str, ImgUrl]` 或 `Tuple[str, ImgPath]`)**: 同时返回文本说明和图片
+- **文本+多图组合 (`Tuple[str, List[ImgPath | ImgUrl]]`)**: 同时返回文本说明和多张图片
 
 #### 返回类型示例
 
@@ -94,6 +96,12 @@ async def analyze_image(image_path: str) -> Tuple[str, ImgPath]:
     analysis_text = "检测到3个对象：2个人、1辆汽车"
     annotated_image = ImgPath("/path/to/annotated_image.png")
     return (analysis_text, annotated_image)
+
+# 5. 多模态返回 - 文本+多张图片
+@tool(name="compare_images", description="返回两张图片用于对比")
+async def compare_images(left_path: str, right_path: str) -> Tuple[str, List[ImgPath]]:
+    """返回对比说明和两张图片"""
+    return "请对比这两张图片", [ImgPath(left_path), ImgPath(right_path)]
 ```
 
 #### 返回类型处理机制
@@ -102,7 +110,7 @@ async def analyze_image(image_path: str) -> Tuple[str, ImgPath]:
 2. **图片类型**: 
    - `ImgUrl`: 直接使用网络 URL
    - `ImgPath`: 自动转换为 base64 编码的 data URL
-3. **组合类型**: 将文本和图片组合成多模态消息，LLM 可以同时看到文本说明和图片内容
+3. **组合类型**: 将文本和图片组合成多模态消息，LLM 可以同时看到文本说明和一张或多张图片内容
 4. **错误处理**: 不支持的返回类型会自动转换为字符串格式
 
 **多模态返回的特殊处理**：
@@ -115,6 +123,7 @@ async def analyze_image(image_path: str) -> Tuple[str, ImgPath]:
 - 确保本地图片文件路径存在且可读
 - 网络图片 URL 应该是公开可访问的
 - 组合类型的元组必须是 `(str, ImgPath)` 或 `(str, ImgUrl)` 格式, 不能交换`str`和`ImgPath`/`ImgUrl`的顺序
+- 多图组合类型必须是 `(str, list[ImgPath | ImgUrl])`，图片列表不能为空
 - 避免返回过大的数据结构，以免影响 LLM 处理效率
 
 ### 长文本截断功能
@@ -535,6 +544,20 @@ async def create_data_visualization(dataset: Dict[str, Any]) -> Tuple[str, ImgUr
     visualization_url = ImgUrl("https://example.com/visualizations/chart_12345.png")
     
     return (description.strip(), visualization_url)
+
+@tool(name="compare_generated_charts", description="生成并返回多个图表")
+async def compare_generated_charts(dataset: Dict[str, Any]) -> Tuple[str, List[ImgPath]]:
+    """
+    生成多个图表并一次返回给模型比较
+
+    Args:
+        dataset: 包含数据和配置的字典
+
+    Returns:
+        比较说明和多张本地图表图片
+    """
+    chart_paths = ["/tmp/chart_a.png", "/tmp/chart_b.png"]
+    return "请比较这两张图表的趋势差异", [ImgPath(path) for path in chart_paths]
 ```
 
 ### 继承方式示例
