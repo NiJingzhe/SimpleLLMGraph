@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.8.3 (2026-05-27) - Dependency Constraint Relaxation
+
+### 🔧 Improvements
+
+- Relaxed runtime, development, and build-system package dependency constraints to use lower-bound-only `>=...` specifiers instead of Poetry caret constraints, fixed pins, or explicit upper bounds.
+- Dropped the tracked `uv.lock` file because the project release workflow no longer supports uv lock synchronization.
+- Regenerated `poetry.lock` after the constraint cleanup; `rich` now resolves to `15.0.0`.
+
+### 🧪 Testing
+
+- Verified the Poetry metadata and sync workflow with `poetry check`, `poetry lock`, and `poetry sync`.
+- Re-ran TUI dependency regression coverage: `19 passed`.
+
 ## 0.8.2 (2026-05-27) - Multimodal Inputs and PyRepl Image Outputs
 
 ### ✨ New Features

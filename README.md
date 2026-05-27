@@ -21,9 +21,9 @@
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/NiJingzhe/SimpleLLMFunc/graphs/commit-activity)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/NiJingzhe/SimpleLLMFunc/pulls)
 
-### Update Notes (0.8.2)
+### Update Notes (0.8.3)
 
-**Multimodal release**: `llm_function` now accepts typed image inputs (`ImgPath`, `ImgUrl`, lists, and unions), while `llm_chat` gets the canonical `UserChatMessage.multimodal(...)` helper for mixed text/image user turns. **PyRepl** now captures image artifacts from `display(Image(...))`, image-rich last expressions, and `ImgPath` / `ImgUrl` results, then returns them through `execute_code` as multimodal tool output. Tool results also support multiple images via `list[ImgPath | ImgUrl]` and `(text, list[ImgPath | ImgUrl])`. See **[CHANGELOG](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/CHANGELOG.md)** for details.
+**Dependency constraint cleanup**: runtime, development, and build-system package dependencies now use lower-bound-only `>=...` specifiers instead of Poetry caret constraints, fixed pins, or explicit package upper bounds. The Poetry lockfile has been regenerated for the new constraints, and the unused `uv.lock` file has been removed from the release workflow. See **[CHANGELOG](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/CHANGELOG.md)** for details.
 
 ### Documentation
 
@@ -655,7 +655,7 @@ LANGFUSE_EXPORT_ALL_SPANS=true
   month = {February},
   title = {{SimpleLLMFunc: A New Approach to Build LLM Applications}},
   url = {https://github.com/NiJingzhe/SimpleLLMFunc},
-  version = {0.8.2},
+  version = {0.8.3},
   year = {2026}
 }
 ```

@@ -21,9 +21,9 @@
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/NiJingzhe/SimpleLLMFunc/graphs/commit-activity)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/NiJingzhe/SimpleLLMFunc/pulls)
 
-### 更新说明 (0.8.2)
+### 更新说明 (0.8.3)
 
-**多模态版本**：`llm_function` 现在支持 typed image inputs（`ImgPath`、`ImgUrl`、列表和 union），`llm_chat` 新增 canonical `UserChatMessage.multimodal(...)` helper，用于混合文本/图片用户输入。**PyRepl** 现在会捕获 `display(Image(...))`、图片型最后表达式，以及 `ImgPath` / `ImgUrl` 结果产生的图片 artifact，并通过 `execute_code` 作为多模态工具输出返回。工具结果也支持通过 `list[ImgPath | ImgUrl]` 和 `(text, list[ImgPath | ImgUrl])` 一次返回多张图片。详情见 **[更新日志](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/CHANGELOG.md)**。
+**依赖约束清理**：runtime、development 和 build-system 包依赖现在统一使用无上限的 `>=...` 约束，不再使用 Poetry caret、固定版本或显式包版本上限。Poetry lockfile 已按新约束重新生成，未继续支持的 `uv.lock` 也已从发布流程中移除。详情见 **[更新日志](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/CHANGELOG.md)**。
 
 ### 文档
 
@@ -654,7 +654,7 @@ LANGFUSE_EXPORT_ALL_SPANS=true
   month = {February},
   title = {{SimpleLLMFunc: A New Approach to Build LLM Applications}},
   url = {https://github.com/NiJingzhe/SimpleLLMFunc},
-  version = {0.8.2},
+  version = {0.8.3},
   year = {2026}
 }
 ```
