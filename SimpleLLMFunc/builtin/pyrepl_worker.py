@@ -15,6 +15,7 @@ import os
 import queue
 import sys
 import tempfile
+import threading
 import time
 import traceback
 import uuid
@@ -73,16 +74,322 @@ class _LineCapture(io.TextIOBase):
             self._buffer = ""
 
 
+class _FdCapture:
+    """Worker-local fd capture for direct writes and child process output."""
+
+    _FLUSH_PREFIX_BASE = b"\x00SLF_FD_FLUSH"
+    _FLUSH_TOKEN_BYTES = 8
+
+    def __init__(
+        self,
+        emit_stdout: Callable[[str, str], None],
+        emit_stderr: Callable[[str, str], None],
+    ) -> None:
+        self._emit_stdout = emit_stdout
+        self._emit_stderr = emit_stderr
+        self._flush_lock = threading.Lock()
+        self._flush_counter = 0
+        self._flush_prefix = self._FLUSH_PREFIX_BASE + uuid.uuid4().bytes
+        self._flush_events: dict[
+            bytes,
+            tuple[threading.Event, Optional[threading.Event]],
+        ] = {}
+        self._stdout_flush_fd: Optional[int] = None
+        self._stderr_flush_fd: Optional[int] = None
+        self._stdout_finished: Optional[threading.Event] = None
+        self._stderr_finished: Optional[threading.Event] = None
+
+    def install(self) -> None:
+        stdin_fd = os.open(os.devnull, os.O_RDONLY)
+        try:
+            os.dup2(stdin_fd, 0, inheritable=True)
+            os.set_inheritable(0, True)
+        finally:
+            if stdin_fd != 0:
+                os.close(stdin_fd)
+
+        self._ensure_fd_open(1, os.O_WRONLY)
+        self._ensure_fd_open(2, os.O_WRONLY)
+
+        self._redirect_fd_to_devnull(1)
+        self._redirect_fd_to_devnull(2)
+
+    def begin_execution(self, exec_id: str) -> None:
+        self._stdout_flush_fd, self._stdout_finished = self._install_output_pipe(
+            fd=1,
+            exec_id=exec_id,
+            emit=self._emit_stdout,
+        )
+        self._stderr_flush_fd, self._stderr_finished = self._install_output_pipe(
+            fd=2,
+            exec_id=exec_id,
+            emit=self._emit_stderr,
+        )
+
+    def finish_execution(self, timeout_seconds: float = 1.0) -> None:
+        self.flush(
+            timeout_seconds=timeout_seconds,
+            stdout_finished=self._stdout_finished,
+            stderr_finished=self._stderr_finished,
+        )
+        self._redirect_fd_to_devnull(1)
+        self._redirect_fd_to_devnull(2)
+        self._close_flush_fds()
+        for event in (self._stdout_finished, self._stderr_finished):
+            if event is not None:
+                event.set()
+        self._stdout_finished = None
+        self._stderr_finished = None
+
+    def _install_output_pipe(
+        self,
+        *,
+        fd: int,
+        exec_id: str,
+        emit: Callable[[str, str], None],
+    ) -> tuple[int, threading.Event]:
+        stdout_read, stdout_write = os.pipe()
+        flush_fd = os.dup(stdout_write)
+        os.set_inheritable(flush_fd, False)
+        finished = threading.Event()
+
+        os.dup2(stdout_write, fd, inheritable=True)
+        os.set_inheritable(fd, True)
+
+        if stdout_write != fd:
+            os.close(stdout_write)
+
+        self._start_reader(stdout_read, exec_id, emit, finished)
+        return flush_fd, finished
+
+    def flush(
+        self,
+        timeout_seconds: float = 1.0,
+        *,
+        stdout_finished: Optional[threading.Event] = None,
+        stderr_finished: Optional[threading.Event] = None,
+    ) -> None:
+        stdout_event = self._write_flush_marker(
+            self._stdout_flush_fd,
+            finished=stdout_finished,
+        )
+        stderr_event = self._write_flush_marker(
+            self._stderr_flush_fd,
+            finished=stderr_finished,
+        )
+
+        deadline = time.monotonic() + timeout_seconds
+        for event in (stdout_event, stderr_event):
+            if event is None:
+                continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            event.wait(remaining)
+
+    def _write_flush_marker(
+        self,
+        fd: Optional[int],
+        *,
+        finished: Optional[threading.Event] = None,
+    ) -> Optional[threading.Event]:
+        if fd is None:
+            if finished is not None:
+                finished.set()
+            return None
+
+        with self._flush_lock:
+            self._flush_counter += 1
+            token = self._flush_counter.to_bytes(self._FLUSH_TOKEN_BYTES, "big")
+            event = threading.Event()
+            self._flush_events[token] = (event, finished)
+
+        try:
+            os.write(fd, self._flush_prefix + token)
+        except OSError:
+            with self._flush_lock:
+                self._flush_events.pop(token, None)
+            if finished is not None:
+                finished.set()
+            return None
+        return event
+
+    def _ack_flush_marker(self, token: bytes) -> None:
+        with self._flush_lock:
+            item = self._flush_events.pop(token, None)
+        if item is not None:
+            event, finished = item
+            if finished is not None:
+                finished.set()
+            event.set()
+
+    def _start_reader(
+        self,
+        fd: int,
+        exec_id: str,
+        emit: Callable[[str, str], None],
+        finished: threading.Event,
+    ) -> None:
+        thread = threading.Thread(
+            target=self._drain_fd,
+            args=(fd, exec_id, emit, finished),
+            daemon=True,
+        )
+        thread.start()
+
+    def _drain_fd(
+        self,
+        fd: int,
+        exec_id: str,
+        emit: Callable[[str, str], None],
+        finished: threading.Event,
+    ) -> None:
+        buffer = b""
+        marker_size = len(self._flush_prefix) + self._FLUSH_TOKEN_BYTES
+
+        try:
+            while True:
+                try:
+                    chunk = os.read(fd, 4096)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+
+                buffer += chunk
+                while True:
+                    marker_index = buffer.find(self._flush_prefix)
+                    if marker_index < 0:
+                        keep_bytes = self._flush_prefix_tail_size(buffer)
+                        emit_bytes = buffer[: len(buffer) - keep_bytes]
+                        buffer = buffer[len(buffer) - keep_bytes :]
+                        if emit_bytes:
+                            self._emit_bytes(emit, exec_id, emit_bytes, finished)
+                        break
+
+                    if len(buffer) < marker_index + marker_size:
+                        if marker_index > 0:
+                            self._emit_bytes(
+                                emit,
+                                exec_id,
+                                buffer[:marker_index],
+                                finished,
+                            )
+                            buffer = buffer[marker_index:]
+                        break
+
+                    if marker_index > 0:
+                        self._emit_bytes(
+                            emit,
+                            exec_id,
+                            buffer[:marker_index],
+                            finished,
+                        )
+
+                    token_start = marker_index + len(self._flush_prefix)
+                    token_end = token_start + self._FLUSH_TOKEN_BYTES
+                    token = buffer[token_start:token_end]
+                    self._ack_flush_marker(token)
+                    buffer = buffer[token_end:]
+        finally:
+            if buffer:
+                self._emit_bytes(emit, exec_id, buffer, finished)
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    @staticmethod
+    def _emit_bytes(
+        emit: Callable[[str, str], None],
+        exec_id: str,
+        data: bytes,
+        finished: threading.Event,
+    ) -> None:
+        if not data or finished.is_set():
+            return
+        emit(exec_id, data.decode("utf-8", errors="replace"))
+
+    def _close_flush_fds(self) -> None:
+        for fd in (self._stdout_flush_fd, self._stderr_flush_fd):
+            if fd is None:
+                continue
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        self._stdout_flush_fd = None
+        self._stderr_flush_fd = None
+
+    @staticmethod
+    def _ensure_fd_open(fd: int, flags: int) -> None:
+        try:
+            os.fstat(fd)
+            return
+        except OSError:
+            pass
+
+        replacement_fd = os.open(os.devnull, flags)
+        try:
+            os.dup2(replacement_fd, fd, inheritable=True)
+            os.set_inheritable(fd, True)
+        finally:
+            if replacement_fd != fd:
+                os.close(replacement_fd)
+
+    @staticmethod
+    def _redirect_fd_to_devnull(fd: int) -> None:
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull_fd, fd, inheritable=True)
+            os.set_inheritable(fd, True)
+        finally:
+            if devnull_fd != fd:
+                os.close(devnull_fd)
+
+    def _flush_prefix_tail_size(self, data: bytes) -> int:
+        max_size = min(len(data), len(self._flush_prefix) - 1)
+        for size in range(max_size, 0, -1):
+            if self._flush_prefix.startswith(data[-size:]):
+                return size
+        return 0
+
+
 class _PyReplWorker:
     """Process-local worker that executes code in a persistent shell."""
 
-    def __init__(self, command_queue: Any, event_queue: Any):
+    def __init__(
+        self,
+        command_queue: Any,
+        event_queue: Any,
+    ):
         self._command_queue = command_queue
         self._event_queue = event_queue
+        self._emit_lock = threading.Lock()
         self._pending_commands: list[dict[str, Any]] = []
         self._active_exec_id: Optional[str] = None
         self._input_idle_timeout_seconds = 300.0
         self._cell_counter = 0
+
+        if hasattr(os, "setsid"):
+            try:
+                os.setsid()
+            except OSError:
+                pass
+
+        self._fd_capture = _FdCapture(
+            emit_stdout=lambda exec_id, text: self._emit_bound_output(
+                EVENT_STDOUT,
+                exec_id,
+                text,
+            ),
+            emit_stderr=lambda exec_id, text: self._emit_bound_output(
+                EVENT_STDERR,
+                exec_id,
+                text,
+            ),
+        )
+        self._fd_capture.install()
 
         self._shell = InteractiveShell()
         self._namespace = self._shell.user_ns
@@ -128,7 +435,11 @@ class _PyReplWorker:
 
     def _emit(self, event_type: str, **payload: Any) -> None:
         message = {"type": event_type, **payload}
-        self._event_queue.put(message)
+        with self._emit_lock:
+            self._event_queue.put(message)
+
+    def _emit_bound_output(self, event_type: str, exec_id: str, text: str) -> None:
+        self._emit(event_type, exec_id=exec_id, text=text)
 
     def _next_command(self, timeout: Optional[float]) -> Optional[dict[str, Any]]:
         if self._pending_commands:
@@ -555,7 +866,6 @@ class _PyReplWorker:
                 else:
                     self._namespace["display"] = old_display
 
-
     def _handle_execute(self, command: dict[str, Any]) -> None:
         exec_id = str(command.get("exec_id", ""))
         code = command.get("code", "")
@@ -636,6 +946,7 @@ class _PyReplWorker:
         builtins.input = input_hook
 
         try:
+            self._fd_capture.begin_execution(exec_id)
             return_value, artifacts = self._execute_python_code(
                 code=code,
                 filename=filename,
@@ -682,6 +993,7 @@ class _PyReplWorker:
                 sys.stderr.flush()
             except Exception:
                 pass
+            self._fd_capture.finish_execution()
 
             sys.stdout = old_stdout
             sys.stderr = old_stderr
@@ -746,7 +1058,10 @@ def run_pyrepl_worker(
             )
             return
 
-    worker = _PyReplWorker(command_queue=command_queue, event_queue=event_queue)
+    worker = _PyReplWorker(
+        command_queue=command_queue,
+        event_queue=event_queue,
+    )
     worker.run_forever()
 
 

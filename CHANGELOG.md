@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.8.4 (2026-05-28) - PyRepl Terminal Isolation
+
+### 🔧 Improvements
+
+- Isolated PyRepl worker stdio at the file-descriptor level so fd `0` no longer inherits the host terminal and fd `1`/`2` are captured through worker-owned pipes.
+- Captured direct `os.write(...)`, C extension output, shell command output, and subprocess stdout/stderr into PyRepl stdout/stderr results instead of leaking to TUI hosts.
+- Detached the worker session on POSIX when possible to reduce access to the host controlling terminal.
+- Dropped late output from long-lived child processes after their originating execution finishes so it cannot contaminate later `execute_code` calls.
+
+### 🧪 Testing
+
+- Added regression coverage for isolated worker fds, direct fd writes, subprocess fd writes, non-duplicated Python `print()` output, and late child-process output.
+- Stabilized async timing tests that were too sensitive to full-suite scheduling load.
+- Verified the full Poetry test suite: `678 passed`.
+
 ## 0.8.3 (2026-05-27) - Dependency Constraint Relaxation
 
 ### 🔧 Improvements

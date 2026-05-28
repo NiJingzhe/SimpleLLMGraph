@@ -21,9 +21,9 @@
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/NiJingzhe/SimpleLLMFunc/graphs/commit-activity)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/NiJingzhe/SimpleLLMFunc/pulls)
 
-### Update Notes (0.8.3)
+### Update Notes (0.8.4)
 
-**Dependency constraint cleanup**: runtime, development, and build-system package dependencies now use lower-bound-only `>=...` specifiers instead of Poetry caret constraints, fixed pins, or explicit package upper bounds. The Poetry lockfile has been regenerated for the new constraints, and the unused `uv.lock` file has been removed from the release workflow. See **[CHANGELOG](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/CHANGELOG.md)** for details.
+**PyRepl terminal isolation**: PyRepl worker processes now isolate fd `0`/`1`/`2` from host terminals, capture direct fd writes and subprocess stdout/stderr into tool output, and drop late child-process output so it cannot corrupt TUI hosts or contaminate later snippets. See **[CHANGELOG](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/CHANGELOG.md)** for details.
 
 ### Documentation
 
@@ -655,7 +655,7 @@ LANGFUSE_EXPORT_ALL_SPANS=true
   month = {February},
   title = {{SimpleLLMFunc: A New Approach to Build LLM Applications}},
   url = {https://github.com/NiJingzhe/SimpleLLMFunc},
-  version = {0.8.3},
+  version = {0.8.4},
   year = {2026}
 }
 ```
