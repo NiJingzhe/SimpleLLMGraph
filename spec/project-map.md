@@ -251,7 +251,7 @@ SimpleLLMFunc/
 - `pyrepl_audit.py`: audit log
 - `pyrepl_input_bridge.py`: process-wide input() request/reply bridge
 - `pyrepl_input_mixin.py`: PyRepl input submission API
-- `pyrepl_worker.py`: PyRepl 子进程 worker
+- `pyrepl_worker.py`: PyRepl 子进程 worker，负责 fd/stdout/stderr 捕获、执行命名空间与 runtime 代理
 - `file_tools.py`: workspace-scoped 文件工具，带 stale-write protection
 
 ### hooks 模块

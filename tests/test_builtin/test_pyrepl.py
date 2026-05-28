@@ -630,6 +630,114 @@ display(Image(data=b'fake image data', format='png'), "keep text")
         assert result["success"] is True
         assert "ok" in result["stdout"]
 
+    @pytest.mark.asyncio
+    async def test_execute_worker_standard_fds_are_isolated(self):
+        """Worker fd 0/1/2 should not inherit a host tty by default."""
+        from SimpleLLMFunc.builtin import PyRepl
+
+        repl = PyRepl()
+        try:
+            result = await repl.execute(
+                "import os\n"
+                "for fd in (0, 1, 2):\n"
+                "    print(f'{fd}:{os.isatty(fd)}')"
+            )
+        finally:
+            repl.close()
+
+        assert result["success"] is True, result["error"] or result["stderr"]
+        assert result["stdout"].splitlines() == ["0:False", "1:False", "2:False"]
+
+    @pytest.mark.asyncio
+    async def test_execute_captures_direct_fd_writes(self):
+        """Direct os.write output should be captured into execute results."""
+        from SimpleLLMFunc.builtin import PyRepl
+
+        repl = PyRepl()
+        try:
+            result = await repl.execute(
+                "import os\n"
+                "os.write(1, b'DIRECT_FD1_MARKER\\n')\n"
+                "os.write(2, b'DIRECT_FD2_MARKER\\n')"
+            )
+        finally:
+            repl.close()
+
+        assert result["success"] is True, result["error"] or result["stderr"]
+        assert "DIRECT_FD1_MARKER" in result["stdout"]
+        assert "DIRECT_FD2_MARKER" in result["stderr"]
+
+    @pytest.mark.asyncio
+    async def test_execute_captures_child_process_fd_writes(self):
+        """Subprocess fd output should use the PyRepl output channel."""
+        from SimpleLLMFunc.builtin import PyRepl
+
+        child_code = (
+            "import os; "
+            "os.write(1, b'CHILD_FD1_MARKER\\n'); "
+            "os.write(2, b'CHILD_FD2_MARKER\\n')"
+        )
+        repl = PyRepl()
+        try:
+            result = await repl.execute(
+                "import subprocess, sys\n"
+                f"subprocess.run([sys.executable, '-c', {child_code!r}], check=False)"
+            )
+        finally:
+            repl.close()
+
+        assert result["success"] is True, result["error"] or result["stderr"]
+        assert "CHILD_FD1_MARKER" in result["stdout"]
+        assert "CHILD_FD2_MARKER" in result["stderr"]
+
+    @pytest.mark.asyncio
+    async def test_late_child_fd_output_does_not_contaminate_next_execute(self):
+        """Long-lived child output should not be attributed to later snippets."""
+        from SimpleLLMFunc.builtin import PyRepl
+
+        child_code = (
+            "import os, time; "
+            "time.sleep(0.15); "
+            "os.write(1, b'LATE_CHILD_FD_MARKER\\n')"
+        )
+        repl = PyRepl()
+        try:
+            spawn_result = await repl.execute(
+                "import subprocess, sys\n"
+                f"subprocess.Popen([sys.executable, '-c', {child_code!r}])\n"
+                "print('child spawned')"
+            )
+            next_result = await repl.execute(
+                "import time\n"
+                "print('NEXT_EXECUTE_START')\n"
+                "time.sleep(0.4)\n"
+                "print('NEXT_EXECUTE_END')"
+            )
+        finally:
+            repl.close()
+
+        assert spawn_result["success"] is True, spawn_result["error"] or spawn_result["stderr"]
+        assert next_result["success"] is True, next_result["error"] or next_result["stderr"]
+        assert "LATE_CHILD_FD_MARKER" not in next_result["stdout"]
+        assert next_result["stdout"].splitlines() == [
+            "NEXT_EXECUTE_START",
+            "NEXT_EXECUTE_END",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_execute_python_print_is_not_duplicated_by_fd_capture(self):
+        """Python print output should still be emitted once via _LineCapture."""
+        from SimpleLLMFunc.builtin import PyRepl
+
+        repl = PyRepl()
+        try:
+            result = await repl.execute("print('PRINT_MARKER')")
+        finally:
+            repl.close()
+
+        assert result["success"] is True, result["error"] or result["stderr"]
+        assert result["stdout"].splitlines().count("PRINT_MARKER") == 1
+
 
 class TestPyReplAudit:
     """Test per-instance audit log persistence behavior."""
@@ -1801,6 +1909,9 @@ class TestPyReplEventLoopSafety:
         from SimpleLLMFunc.builtin import PyRepl
 
         repl = PyRepl()
+        warmup = await repl.execute("0")
+        assert warmup["success"] is True, warmup["error"] or warmup["stderr"]
+
         tick_count = 0
         running = True
 

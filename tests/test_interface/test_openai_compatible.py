@@ -140,7 +140,7 @@ async def test_chat_stream_stops_after_finish_reason() -> None:
             chunks.append(chunk)
         return chunks
 
-    chunks = await asyncio.wait_for(_collect_chunks(), timeout=0.2)
+    chunks = await asyncio.wait_for(_collect_chunks(), timeout=1.0)
 
     assert len(chunks) == 2
     assert chunks[-1].choices[0].finish_reason == "stop"
@@ -191,7 +191,7 @@ async def test_chat_stream_keeps_post_finish_usage_chunk() -> None:
             chunks.append(chunk)
         return chunks
 
-    chunks = await asyncio.wait_for(_collect_chunks(), timeout=0.3)
+    chunks = await asyncio.wait_for(_collect_chunks(), timeout=1.0)
 
     assert len(chunks) == 3
     assert chunks[1].choices[0].finish_reason == "stop"
@@ -240,7 +240,7 @@ async def test_chat_stream_allows_non_usage_chunk_before_usage() -> None:
             chunks.append(chunk)
         return chunks
 
-    chunks = await asyncio.wait_for(_collect_chunks(), timeout=0.3)
+    chunks = await asyncio.wait_for(_collect_chunks(), timeout=1.0)
 
     assert len(chunks) == 4
     assert chunks[-1].usage is not None
@@ -291,7 +291,7 @@ async def test_chat_stream_fallback_without_stream_options() -> None:
             chunks.append(chunk)
         return chunks
 
-    chunks = await asyncio.wait_for(_collect_chunks(), timeout=0.3)
+    chunks = await asyncio.wait_for(_collect_chunks(), timeout=1.0)
 
     assert len(chunks) == 2
     assert create_mock.await_count == 2

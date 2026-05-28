@@ -6,7 +6,7 @@ SimpleLLMFunc 提供内置的 PyRepl 支持，允许 LLM 在一个连续上下�
 
 - **IPython 子进程后端**：每个 `PyRepl` 实例对应一个独立子进程，内部运行 `IPython InteractiveShell`
 - **连续上下文**：变量在多次调用间持久化，LLM 可以分步执行任务
-- **实时流式输出**：通过 `event_emitter` 实时获取 stdout/stderr 输出
+- **实时流式输出**：通过 `event_emitter` 实时获取 stdout/stderr 输出，包括 Python `print()`、直接 fd 写入和子进程 stdout/stderr
 - **图片产物返回**：`display(Image(...))` 或最后表达式产生的图片会被捕获为多模态工具返回
 - **异步不阻塞**：代码执行在独立线程运行，不阻塞主事件循环（适合 TUI/流式 UI）
 - **Session 隔离**：不同的 PyRepl 实例相互独立，互不影响
@@ -15,6 +15,7 @@ SimpleLLMFunc 提供内置的 PyRepl 支持，允许 LLM 在一个连续上下�
 - **长输出自动截断**：`execute_code` 已启用 `too_long_to_file`，当输出超过 20000 tokens 时自动保存到临时文件并截断返回
 - **Runtime 原语**：通过 `runtime.selfref.context.*` 与 `runtime.selfref.fork.*` 暴露受控的 self-reference API
 - **Origin 感知事件流**：每个 `EventYield` 都携带 `origin` 元数据，方便在 TUI 或自定义 UI 中稳定区分主链路和 fork 链路
+- **终端隔离**：PyRepl worker 默认不继承宿主终端的 fd 0/1/2，并在 POSIX 上尽量脱离控制终端，避免子进程污染 TUI/daemon 宿主的终端状态
 
 ## 快速开始
 

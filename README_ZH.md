@@ -21,9 +21,9 @@
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/NiJingzhe/SimpleLLMFunc/graphs/commit-activity)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/NiJingzhe/SimpleLLMFunc/pulls)
 
-### 更新说明 (0.8.3)
+### 更新说明 (0.8.4)
 
-**依赖约束清理**：runtime、development 和 build-system 包依赖现在统一使用无上限的 `>=...` 约束，不再使用 Poetry caret、固定版本或显式包版本上限。Poetry lockfile 已按新约束重新生成，未继续支持的 `uv.lock` 也已从发布流程中移除。详情见 **[更新日志](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/CHANGELOG.md)**。
+**PyRepl 终端隔离**：PyRepl worker 现在会隔离宿主终端的 fd `0`/`1`/`2`，把直接 fd 写入和子进程 stdout/stderr 捕获到工具输出中，并丢弃长活子进程的迟到输出，避免污染 TUI 宿主或后续代码片段。详情见 **[更新日志](https://github.com/NiJingzhe/SimpleLLMFunc/blob/master/CHANGELOG.md)**。
 
 ### 文档
 
@@ -654,7 +654,7 @@ LANGFUSE_EXPORT_ALL_SPANS=true
   month = {February},
   title = {{SimpleLLMFunc: A New Approach to Build LLM Applications}},
   url = {https://github.com/NiJingzhe/SimpleLLMFunc},
-  version = {0.8.3},
+  version = {0.8.4},
   year = {2026}
 }
 ```

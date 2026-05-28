@@ -65,6 +65,7 @@ Important fork context rules:
 - Print checkpoints and short summaries instead of dumping huge objects.
 - Prefer runtime discovery before assuming a primitive contract.
 - Treat REPL state as persistent and cumulative across calls.
+- PyRepl isolates worker stdio by default: child process stdout/stderr and direct fd writes are captured into tool output instead of inheriting the host terminal.
 
 ## Important reset behavior
 

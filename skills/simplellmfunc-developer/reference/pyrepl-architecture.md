@@ -32,7 +32,7 @@ Important boundaries:
 - `SimpleLLMFunc/builtin/pyrepl_worker_client.py`: subprocess and multiprocessing queue lifecycle.
 - `SimpleLLMFunc/builtin/pyrepl_worker_mixin.py`: facade-compatible wrappers around the worker client.
 - `SimpleLLMFunc/builtin/pyrepl_execution.py`: main-process `execute()` / `reset()` orchestration, timeout handling, event polling, event-emitter forwarding, audit payload assembly.
-- `SimpleLLMFunc/builtin/pyrepl_worker.py`: worker-process IPython shell, stdout/stderr capture, `input()` hook, primitive RPC transport, image artifact capture.
+- `SimpleLLMFunc/builtin/pyrepl_worker.py`: worker-process IPython shell, fd-level and Python-level stdout/stderr capture, `input()` hook, primitive RPC transport, image artifact capture.
 - `SimpleLLMFunc/builtin/pyrepl_primitive_host.py`: main-process primitive registry/backend host and primitive call execution.
 - `SimpleLLMFunc/builtin/pyrepl_tools.py`: `execute_code` / `reset_repl` tool definitions, output formatting, and artifact-to-multimodal return conversion.
 - `SimpleLLMFunc/runtime/worker_proxy.py`: worker-side dynamic `runtime` proxy and dotted namespace builder.
@@ -46,7 +46,7 @@ Startup sequence:
 
 1. Create `command_queue` and `event_queue`.
 2. Spawn a daemon worker process targeting `run_pyrepl_worker(command_queue, event_queue, working_directory)`.
-3. Worker constructs `_PyReplWorker`, then emits `EVENT_WORKER_READY`.
+3. Worker constructs `_PyReplWorker`, isolates fd 0/1/2, detaches from the controlling terminal on POSIX when possible, then emits `EVENT_WORKER_READY`.
 4. Main process waits up to 10 seconds for `EVENT_WORKER_READY`, while preserving unexpected startup events in `prefetched_events`.
 
 Main-to-worker command messages are plain dicts:
@@ -92,7 +92,13 @@ This preserves normal REPL state across calls: variables defined in one `execute
 
 ## stdout and stderr capture
 
-stdout/stderr capture happens inside the worker process.
+stdout/stderr capture happens inside the worker process. It has two layers:
+
+- fd-level capture redirects worker fd `0` to `/dev/null`. During each execution, fd `1`/`2` point to execution-scoped worker-owned pipes. Reader threads drain those pipes and emit `EVENT_STDOUT` / `EVENT_STDERR` with that execution's `exec_id`. This captures `os.write(...)`, C extension writes, shell commands, and subprocess stdout/stderr.
+- Between executions, worker fd `1`/`2` point to `/dev/null`. Long-lived children keep their old execution pipe; late output is drained and dropped instead of contaminating later snippets or reaching the host terminal.
+- Python-level capture replaces `sys.stdout` / `sys.stderr` during each execution so normal Python `print()` output still streams line-by-line and is not duplicated by fd capture.
+
+On POSIX, worker startup also calls `os.setsid()` when possible before user code runs. This prevents the worker and descendants from keeping the host terminal as their controlling terminal.
 
 Before executing user code, `_handle_execute(...)` temporarily replaces:
 
@@ -118,8 +124,8 @@ The main process receives these events in `PyReplExecutionMixin.execute(...)`, a
 There are two output paths:
 
 ```text
-worker stdout capture -> event_queue -> stdout_parts -> final execute result / tool summary
-worker stdout capture -> event_queue -> ToolEventEmitter -> ReAct CustomEvent stream
+worker output capture -> event_queue -> stdout_parts/stderr_parts -> final execute result / tool summary
+worker output capture -> event_queue -> ToolEventEmitter -> ReAct CustomEvent stream
 ```
 
 ## ToolEventEmitter path
