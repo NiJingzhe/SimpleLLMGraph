@@ -89,7 +89,7 @@ For `@llm_chat`, the framework builds messages in this order:
    - latest history `system` message if present
    - otherwise the function docstring
 4. Filter all `system` messages out of the history before appending the rest of the conversation.
-5. Build the current user message from non-history arguments.
+5. Build the current user message from the single `message` argument.
 6. If tools exist, prepend a deduplicated `<tool_best_practices>` block to the system prompt.
 7. Append a `<must_principles>` block telling the model to use native structured tool calls.
 
@@ -112,6 +112,7 @@ This has major consequences:
 - older history `system` messages are removed
 - the docstring is the default policy, not the only possible system prompt
 - current-turn task data belongs in the user message, not in the docstring
+- multi-parameter schema-style inputs belong in `llm_function`, not `llm_chat`
 
 ### What to write in an `llm_chat` docstring
 
@@ -188,7 +189,7 @@ This means durable prompt memory is intended to hold the human-authored base pol
 
 - `llm_function`: write the docstring like a function contract plus reasoning policy.
 - `llm_chat`: write the docstring like a long-lived assistant policy.
-- Put dynamic user/task data in call arguments.
+- Put dynamic user/task data in the `message` argument for `llm_chat`.
 - Put tool-specific usage rules on the tool when possible.
 - If you need a different system prompt for one chat session, pass a latest `system` message in history.
 - If you need durable runtime context changes, use self-reference context helpers such as `runtime.selfref.context.remember(...)` or `runtime.selfref.context.compact(...)`; these go through the framework's internal patch boundary.

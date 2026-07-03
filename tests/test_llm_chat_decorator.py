@@ -442,6 +442,50 @@ async def test_llm_chat_accepts_explicit_multimodal_user_message() -> None:
     assert "https://example.com/cat.png" in captured["user_task_prompt"]
 
 
+@pytest.mark.asyncio
+async def test_llm_chat_string_message_is_single_bare_user_turn() -> None:
+    """llm_chat should treat chat input as one user message, not schema params."""
+
+    captured: dict[str, Any] = {}
+
+    async def fake_react_loop(*args: Any, **kwargs: Any):
+        _ = args
+        captured["messages"] = kwargs["messages"]
+        captured["user_task_prompt"] = kwargs["user_task_prompt"]
+        yield ResponseYield(
+            type="response",
+            response="ok",
+            messages=kwargs["messages"],
+        )
+
+    mock_llm = MagicMock()
+    mock_llm.model_name = "test-model"
+
+    with (
+        patch(
+            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.ReAct_loop",
+            new=fake_react_loop,
+        ),
+        patch(
+            "SimpleLLMFunc.llm_decorator.llm_chat_decorator.langfuse_client.start_as_current_observation",
+            return_value=_DummyObservation(),
+        ),
+    ):
+
+        @llm_chat(llm_interface=mock_llm)
+        async def agent(message: str, topic: str = "ignored", history=None):
+            """test agent"""
+
+        outputs = []
+        async for output in agent("hello", topic="docs", history=[]):
+            outputs.append(output)
+
+    assert outputs
+    assert captured["messages"][-1] == {"role": "user", "content": "hello"}
+    assert "topic: docs" not in str(captured["messages"])
+    assert captured["user_task_prompt"] == "hello"
+
+
 def test_llm_chat_strict_signature_rejects_non_canonical_shapes() -> None:
     mock_llm = MagicMock()
     mock_llm.model_name = "test-model"
@@ -1363,7 +1407,7 @@ async def test_llm_chat_selfref_fork_spawn_preserves_langfuse_trace_context() ->
         and candidate[0].get("role") == "system"
         and "test agent" in str(candidate[0].get("content", ""))
         and candidate[1] == {"role": "user", "content": "seed"}
-        and candidate[2] == {"role": "user", "content": "message: root task"}
+        and candidate[2] == {"role": "user", "content": "root task"}
         and candidate[3].get("role") == "user"
         and "You are now already a forked subagent."
         in str(candidate[3].get("content", ""))
@@ -1692,7 +1736,7 @@ async def test_llm_chat_event_mode_merges_self_reference_memory_mutations() -> N
                 final_messages=[
                     {"role": "system", "content": "sys"},
                     {"role": "user", "content": "seed"},
-                    {"role": "user", "content": "message: hello"},
+                    {"role": "user", "content": "hello"},
                     {"role": "assistant", "content": "done"},
                 ],
                 total_iterations=1,
@@ -1744,7 +1788,7 @@ async def test_llm_chat_event_mode_merges_self_reference_memory_mutations() -> N
     assert final_history[1:] == [
         {"role": "user", "content": "seed"},
         {"role": "user", "content": "[plan] keep me"},
-        {"role": "user", "content": "message: hello"},
+        {"role": "user", "content": "hello"},
         {"role": "assistant", "content": "done"},
     ]
     assert history == final_history
@@ -1877,7 +1921,7 @@ async def test_llm_chat_event_mode_ignores_fork_react_end_for_history_merge() ->
                 final_messages=[
                     {"role": "system", "content": "sys"},
                     {"role": "user", "content": "seed"},
-                    {"role": "user", "content": "message: hello"},
+                    {"role": "user", "content": "hello"},
                     {"role": "assistant", "content": "done"},
                 ],
                 total_iterations=1,
@@ -1935,7 +1979,7 @@ async def test_llm_chat_event_mode_ignores_fork_react_end_for_history_merge() ->
     assert final_history[1:] == [
         {"role": "user", "content": "seed"},
         {"role": "user", "content": "[plan] keep me"},
-        {"role": "user", "content": "message: hello"},
+        {"role": "user", "content": "hello"},
         {"role": "assistant", "content": "done"},
     ]
     assert not any(item.get("content") == "child prompt" for item in final_history)
@@ -1964,7 +2008,7 @@ async def test_llm_chat_non_event_mode_merges_self_reference_memory_mutations() 
             [
                 {"role": "system", "content": "sys"},
                 {"role": "user", "content": "seed"},
-                {"role": "user", "content": "message: hello"},
+                {"role": "user", "content": "hello"},
                 {"role": "assistant", "content": "done"},
             ],
         )
@@ -2011,7 +2055,7 @@ async def test_llm_chat_non_event_mode_merges_self_reference_memory_mutations() 
         {"role": "system", "content": "test agent"},
         {"role": "user", "content": "seed"},
         {"role": "user", "content": "[plan] keep me"},
-        {"role": "user", "content": "message: hello"},
+        {"role": "user", "content": "hello"},
         {"role": "assistant", "content": "done"},
     ]
     assert self_reference.snapshot_history("agent_main") == history

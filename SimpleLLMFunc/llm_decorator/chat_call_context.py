@@ -49,19 +49,23 @@ def build_chat_call_context(
     )
 
     task_arguments = dict(function_signature.bound_args.arguments)
+    message_value = task_arguments.get("message")
     if "message" in task_arguments:
         try:
-            task_arguments["message"] = normalize_user_chat_message(
-                task_arguments["message"]
-            )
+            user_task_payload: Any = normalize_user_chat_message(message_value)
         except ValueError:
-            pass
+            user_task_payload = "" if message_value is None else str(message_value)
+    else:
+        user_task_payload = task_arguments
 
-    user_task_prompt = json.dumps(
-        task_arguments,
-        default=str,
-        ensure_ascii=False,
-    )
+    if isinstance(user_task_payload, str):
+        user_task_prompt = user_task_payload
+    else:
+        user_task_prompt = json.dumps(
+            user_task_payload,
+            default=str,
+            ensure_ascii=False,
+        )
 
     return ChatCallContext(
         signature=function_signature,

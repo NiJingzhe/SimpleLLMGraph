@@ -174,7 +174,7 @@ Do not introduce code that directly mutates `ContextState.messages` outside of `
 
 ### Decorator rules
 - `@llm_function` returns `LLMFunction`; `@llm_chat` returns `LLMChat`. Preserve function-like metadata (`__wrapped__`, `__name__`, `__doc__`, `__annotations__`, `__signature__`) when changing them.
-- Multimodal input policy: `llm_function` should use explicit `ImgUrl` / `ImgPath` typed parameters, while `llm_chat` should prefer one OpenAI-compatible `UserChatMessage` user-message object.
+- Chat input policy: `llm_chat` consumes one current user turn from `message`; plain strings are bare user content, and multimodal turns should use one OpenAI-compatible `UserChatMessage`. Use `llm_function` for multi-parameter schema-style tasks.
 - Do not reintroduce closure-only wrapper implementations for SelfRef binding; SelfRef should bind the stable `LLMChat` instance.
 - There is no `enable_event` or `return_mode` decorator parameter; `llm_chat` always yields `ReactOutput`, and `llm_function.stream(...)` yields `ReactOutput`.
 - Prefer `async def` for decorated public patterns and tool implementations.

@@ -19,7 +19,6 @@ from SimpleLLMFunc.base.type_resolve.multimodal import has_multimodal_content
 from SimpleLLMFunc.logger import push_debug, push_warning
 from SimpleLLMFunc.logger.logger import get_location
 from SimpleLLMFunc.runtime.selfref.state import MemoryHistory
-from SimpleLLMFunc.tool import Tool
 from SimpleLLMFunc.type import HistoryList
 from SimpleLLMFunc.type.chat_input import (
     UserChatMessage,
@@ -289,29 +288,21 @@ def _extract_explicit_chat_user_message(
 
 def build_chat_user_message_content(
     arguments: Dict[str, Any],
-    type_hints: Dict[str, Any],
-    has_multimodal: bool,
     exclude_params: List[str],
 ) -> Union[str, List[Dict[str, Any]]]:
     explicit_message = _extract_explicit_chat_user_message(arguments, exclude_params)
     if explicit_message is not None:
         return cast(Union[str, List[Dict[str, Any]]], explicit_message["content"])
 
-    if has_multimodal:
-        return build_multimodal_content(
-            arguments,
-            type_hints,
-            exclude_params=exclude_params,
-        )
+    if "message" not in arguments or "message" in exclude_params:
+        return ""
 
-    message_parts = [
-        f"{param_name}: {param_value}"
-        for param_name, param_value in arguments.items()
-        if param_name not in exclude_params
-        and param_value is not None
-        and not (isinstance(param_value, str) and param_value == "")
-    ]
-    return "\n\t".join(message_parts)
+    message_value = arguments["message"]
+    if message_value is None:
+        return ""
+    if isinstance(message_value, str):
+        return message_value
+    return str(message_value)
 
 
 def build_chat_system_prompt(
@@ -377,11 +368,6 @@ def build_chat_messages(
     if custom_history:
         messages.extend(filter_history_messages(custom_history, func_name))
 
-    multimodal = has_multimodal_content(
-        arguments,
-        type_hints,
-        exclude_params=exclude_params,
-    )
     explicit_message = _extract_explicit_chat_user_message(arguments, exclude_params)
     if explicit_message is not None:
         messages.append(cast(MessageParam, explicit_message))
@@ -389,8 +375,6 @@ def build_chat_messages(
 
     user_message_content = build_chat_user_message_content(
         arguments,
-        type_hints,
-        multimodal,
         exclude_params,
     )
     if user_message_content:

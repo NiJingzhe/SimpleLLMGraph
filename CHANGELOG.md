@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### 🔧 Improvements
+
+- Changed `llm_chat` current-turn construction to treat `message` as the single user turn: plain `str` messages are passed as bare user content instead of `message: ...`, while `UserChatMessage` and OpenAI-compatible user message dicts continue to pass through directly.
+- Stopped constructing schematic multi-parameter user prompts for `llm_chat`; use `llm_function` for schema-style multi-argument tasks.
+
 ## 0.8.4 (2026-05-28) - PyRepl Terminal Isolation
 
 ### 🔧 Improvements

@@ -20,7 +20,9 @@ Best practices:
 
 - Use `stream=True` for chat UIs or incremental feedback.
 - Name the history parameter `history` or `chat_history`.
+- Treat `message` as the single current user turn. Plain strings are sent as bare user content; they are not rendered as `message: ...`.
 - For multimodal input, use exactly one canonical `message: UserChatMessage` parameter and construct turns with `UserChatMessage.multimodal(...)`.
+- Do not model multi-parameter schema-style tasks with `llm_chat`; use `llm_function` for those.
 - Keep `history` outside the function and feed it back in on the next turn.
 - Use `strict_signature=True` when you want a stable agent signature for self-reference or fork-heavy flows.
 - Set an explicit `max_tool_calls` only if you want a hard loop cap.
