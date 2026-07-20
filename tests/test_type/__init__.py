@@ -1,3 +1,0 @@
-"""Type system tests."""
-
-

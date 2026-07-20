@@ -1,0 +1,26 @@
+{
+  "openai": [
+    {
+      "model_name": "gpt-4o-mini",
+      "api_keys": ["sk-your-key"],
+      "base_url": "https://api.openai.com/v1",
+      "max_retries": 5,
+      "retry_delay": 1.0,
+      "rate_limit_capacity": 20,
+      "rate_limit_refill_rate": 3.0,
+      "context_window": 200000
+    }
+  ],
+  "openrouter": [
+    {
+      "model_name": "openai/gpt-4o-mini",
+      "api_keys": ["sk-or-your-key"],
+      "base_url": "https://openrouter.ai/api/v1",
+      "max_retries": 5,
+      "retry_delay": 1.0,
+      "rate_limit_capacity": 10,
+      "rate_limit_refill_rate": 1.0,
+      "context_window": 200000
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "include": ["SimpleLLMFunc", "tests", "examples"],
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "strict",
+  "reportMissingTypeArgument": "error",
+  "reportUnknownMemberType": "error",
+  "reportUnknownParameterType": "error",
+  "reportUnknownVariableType": "error",
+  "reportUnknownArgumentType": "error",
+  "reportMissingParameterType": "error",
+  "reportMissingTypeStubs": "none",
+  "reportPrivateImportUsage": "none",
+  "reportMissingModuleSource": "none",
+  "reportUnusedImport": "warning",
+  "reportDuplicateImport": "warning",
+  "reportUnusedFunction": "none",
+  "reportUnusedVariable": "warning"
+}

@@ -1,6 +1,0 @@
-LOG_LEVEL=WARNING
-LOG_DIR=./logs
-LANGFUSE_BASE_URL=http://your.langfuse.url
-LANGFUSE_SECRET_KEY=your_secret_key
-LANGFUSE_PUBLIC_KEY=your_public_key
-LANGFUSE_EXPORT_ALL_SPANS=true

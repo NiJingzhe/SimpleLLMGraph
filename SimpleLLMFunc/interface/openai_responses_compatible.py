@@ -3,198 +3,252 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from types import SimpleNamespace
-from typing import Any, AsyncGenerator, Dict, Iterable, Literal, Optional, cast
+from inspect import isawaitable
+from typing import (
+    Any,
+    AsyncGenerator,
+    Awaitable,
+    Iterable,
+    Optional,
+    cast,
+    override,
+)
 
 from openai import AsyncOpenAI
-from openai.types.chat import ChatCompletion
-from openai.types.chat.chat_completion import Choice
-from openai.types.chat.chat_completion_chunk import (
-    ChatCompletionChunk,
-    Choice as ChunkChoice,
-    ChoiceDelta,
-)
-from openai.types.chat.chat_completion_message import ChatCompletionMessage
-from openai.types.chat.chat_completion_message_function_tool_call import (
-    ChatCompletionMessageFunctionToolCall,
-    Function,
-)
-from openai.types.completion_usage import CompletionUsage
-from openai.types.responses import Response, ResponseStreamEvent
-from typing_extensions import override
+from openai.types.responses import Response, ResponseOutputItem, ResponseStreamEvent
 
+from SimpleLLMFunc.cancellation import (
+    CancellationToken,
+    await_with_cancellation,
+)
+from SimpleLLMFunc.context.ir import (
+    AssistantMessage,
+    Chunk,
+    Choice,
+    Completion,
+    CompletionChoice,
+    CompletionTokensDetails,
+    Delta,
+    FinishReason,
+    Request as IRRequest,
+    Role,
+    ToolCall,
+    ToolCallDelta,
+    ToolCallDeltaFunction,
+    ToolCallFunction,
+    Usage,
+)
+from SimpleLLMFunc.context.ir._enums import ToolCallType
 from SimpleLLMFunc.interface.key_pool import APIKeyPool
 from SimpleLLMFunc.interface.llm_interface import DEFAULT_CONTEXT_WINDOW, LLM_Interface
 from SimpleLLMFunc.interface.token_bucket import rate_limit_manager
 from SimpleLLMFunc.logger import (
+    get_current_context_attribute,
     get_current_trace_id,
-    get_location,
+    push_critical,
     push_debug,
     push_error,
     push_warning,
-)
-from SimpleLLMFunc.logger.logger import (
-    get_current_context_attribute,
-    push_critical,
     set_current_context_attribute,
 )
 
 
 _RESPONSES_TOOL_HIDDEN_PROPERTIES = {"event_emitter"}
-_RESPONSES_UNSUPPORTED_REQUEST_KWARGS = {"temperature", "top_p", "n"}
+_RESPONSES_REASONING_SIGNATURE_PREFIX = "openai-responses:"
 
 
-def _extract_response_output_text(response: Response) -> str:
+# --------------------------------------------------------------------------- #
+# IR -> Responses wire format translation
+# --------------------------------------------------------------------------- #
+
+
+def _ir_user_content_to_response_content(content: object) -> list[dict[str, object]]:
+    """Translate IR user content (str or list of content parts) into the
+    Responses API ``input_text`` / ``input_image`` content list.
+    """
+    if isinstance(content, list):
+        parts = cast(list[object], content)
+        converted: list[dict[str, object]] = []
+        for part in parts:
+            if not isinstance(part, dict):
+                raise ValueError("unsupported user content part for Responses API")
+            pd = cast(dict[str, object], part)
+            part_type = pd.get("type")
+            if part_type in ("input_text", "text"):
+                converted.append(
+                    {"type": "input_text", "text": str(pd.get("text", ""))}
+                )
+                continue
+            if part_type in ("input_image", "image_url"):
+                image_url = pd.get("image_url")
+                if isinstance(image_url, str) and image_url:
+                    converted.append(
+                        {
+                            "type": "input_image",
+                            "image_url": image_url,
+                            "detail": "auto",
+                        }
+                    )
+                    continue
+                if isinstance(image_url, dict):
+                    iu = cast(dict[str, object], image_url)
+                    url = iu.get("url")
+                    if isinstance(url, str) and url:
+                        image_part: dict[str, object] = {
+                            "type": "input_image",
+                            "image_url": url,
+                            "detail": "auto",
+                        }
+                        detail = iu.get("detail")
+                        if detail in ("low", "high", "auto"):
+                            image_part["detail"] = detail
+                        converted.append(image_part)
+                        continue
+            raise ValueError(
+                f"Responses API does not support user content part {part_type!r}"
+            )
+        return converted or [{"type": "input_text", "text": ""}]
+    text = "" if content is None else str(content)
+    return [{"type": "input_text", "text": text}]
+
+
+def _assistant_text_item(text: str) -> dict[str, object]:
+    return {
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "input_text", "text": text}],
+    }
+
+
+def _reasoning_text(payload: dict[str, object]) -> str:
     fragments: list[str] = []
-    for item in getattr(response, "output", []) or []:
-        if getattr(item, "type", None) != "message":
+    for key in ("content", "summary"):
+        parts = payload.get(key)
+        if not isinstance(parts, list):
             continue
-        for content in getattr(item, "content", []) or []:
-            if getattr(content, "type", None) == "output_text":
-                text = getattr(content, "text", None)
+        for part in cast(list[object], parts):
+            if isinstance(part, dict):
+                text = cast(dict[str, object], part).get("text")
                 if isinstance(text, str) and text:
                     fragments.append(text)
-    return "".join(fragments)
+    return "\n".join(fragments)
 
 
-def _extract_response_reasoning_details(response: Response) -> list[dict[str, Any]]:
-    details: list[dict[str, Any]] = []
-    for item in getattr(response, "output", []) or []:
-        if getattr(item, "type", None) != "reasoning":
-            continue
-
-        content_parts = getattr(item, "content", None) or []
-        for index, part in enumerate(content_parts):
-            text = getattr(part, "text", None)
-            if isinstance(text, str) and text:
-                details.append(
-                    {
-                        "id": getattr(item, "id", "") or "",
-                        "format": "text",
-                        "index": index,
-                        "type": "reasoning.text",
-                        "data": text,
-                    }
-                )
-
-        summary_parts = getattr(item, "summary", None) or []
-        for index, part in enumerate(summary_parts, start=len(details)):
-            text = getattr(part, "text", None)
-            if isinstance(text, str) and text:
-                details.append(
-                    {
-                        "id": getattr(item, "id", "") or "",
-                        "format": "text",
-                        "index": index,
-                        "type": "reasoning.summary_text",
-                        "data": text,
-                    }
-                )
-    return details
-
-
-def _extract_response_tool_calls(
-    response: Response,
-) -> list[ChatCompletionMessageFunctionToolCall]:
-    tool_calls: list[ChatCompletionMessageFunctionToolCall] = []
-    for item in getattr(response, "output", []) or []:
-        if getattr(item, "type", None) != "function_call":
-            continue
-        tool_calls.append(
-            ChatCompletionMessageFunctionToolCall(
-                id=getattr(item, "call_id", None) or getattr(item, "id", "") or "",
-                type="function",
-                function=Function(
-                    name=getattr(item, "name", "") or "",
-                    arguments=getattr(item, "arguments", "") or "{}",
-                ),
-            )
+def _decode_responses_reasoning_part(payload: dict[str, object]) -> dict[str, object]:
+    signature = payload.get("signature")
+    if not isinstance(signature, str) or not signature.startswith(
+        _RESPONSES_REASONING_SIGNATURE_PREFIX
+    ):
+        raise ValueError(
+            "Responses API cannot losslessly replay this reasoning signature"
         )
-    return tool_calls
+    try:
+        item = json.loads(signature.removeprefix(_RESPONSES_REASONING_SIGNATURE_PREFIX))
+    except json.JSONDecodeError as exc:
+        raise ValueError("invalid Responses reasoning signature") from exc
+    if not isinstance(item, dict):
+        raise ValueError("invalid Responses reasoning signature")
+    reasoning_item = cast(dict[str, object], item)
+    if (
+        reasoning_item.get("type") != "reasoning"
+        or not isinstance(reasoning_item.get("id"), str)
+        or not isinstance(reasoning_item.get("summary"), list)
+    ):
+        raise ValueError("invalid Responses reasoning signature")
+    visible_reasoning = payload.get("reasoning")
+    if visible_reasoning != _reasoning_text(reasoning_item):
+        raise ValueError("Responses reasoning text does not match its signature")
+    return reasoning_item
 
 
-def _extract_usage(response: Response) -> Optional[CompletionUsage]:
-    usage = getattr(response, "usage", None)
-    if usage is None:
-        return None
+def _ir_assistant_content_to_response_items(
+    content: object,
+) -> list[dict[str, object]]:
+    """Translate assistant content into valid, ordered Responses input items."""
 
-    prompt_tokens = int(getattr(usage, "input_tokens", 0) or 0)
-    completion_tokens = int(getattr(usage, "output_tokens", 0) or 0)
-    total_tokens = int(
-        getattr(usage, "total_tokens", prompt_tokens + completion_tokens)
-        or (prompt_tokens + completion_tokens)
-    )
-    return CompletionUsage(
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        total_tokens=total_tokens,
-    )
+    if content is None:
+        return []
+    if isinstance(content, str):
+        return [_assistant_text_item(content)] if content else []
+    if not isinstance(content, list):
+        raise ValueError("unsupported assistant content for Responses API")
 
+    converted: list[dict[str, object]] = []
+    text_parts: list[dict[str, object]] = []
 
-def _response_to_chat_completion(response: Response) -> ChatCompletion:
-    tool_calls = _extract_response_tool_calls(response)
-    content = None if tool_calls else _extract_response_output_text(response)
-    message = ChatCompletionMessage(
-        role="assistant",
-        content=content,
-        tool_calls=tool_calls or None,
-    )
+    def flush_text() -> None:
+        if not text_parts:
+            return
+        converted.append(
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": list(text_parts),
+            }
+        )
+        text_parts.clear()
 
-    reasoning_details = _extract_response_reasoning_details(response)
-    if reasoning_details:
-        message.reasoning_details = reasoning_details
-
-    finish_reason = "tool_calls" if tool_calls else "stop"
-    choice = Choice(
-        finish_reason=finish_reason,
-        index=0,
-        message=message,
-    )
-    completion = ChatCompletion(
-        id=getattr(response, "id", "") or "",
-        choices=[choice],
-        created=int(getattr(response, "created_at", 0) or 0),
-        model=getattr(response, "model", "") or "",
-        object="chat.completion",
-        usage=_extract_usage(response),
-    )
-    completion.response_id = getattr(response, "id", None)
-    return completion
+    for part in cast(list[object], content):
+        if not isinstance(part, dict):
+            raise ValueError("unsupported assistant content part for Responses API")
+        payload = cast(dict[str, object], part)
+        if payload.get("type") == "output_text":
+            text = str(payload.get("text", ""))
+            if text:
+                text_parts.append({"type": "input_text", "text": text})
+            continue
+        if payload.get("type") == "reasoning":
+            flush_text()
+            converted.append(_decode_responses_reasoning_part(payload))
+            continue
+        raise ValueError(
+            "Responses API cannot losslessly replay this assistant content part"
+        )
+    flush_text()
+    return converted
 
 
-def _messages_to_response_input(
-    messages: Iterable[Dict[str, Any]],
-) -> list[dict[str, Any]]:
-    input_items: list[dict[str, Any]] = []
+def _ir_messages_to_response_input(
+    messages: Iterable[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Translate IR messages (already JSON-dumped) to Responses API ``input``."""
+    input_items: list[dict[str, object]] = []
     for message in messages:
         role = message.get("role")
         content = message.get("content")
 
         if role == "system":
             continue
-
-        if role == "user":
+        if role in ("user", "developer"):
             input_items.append(
                 {
                     "type": "message",
                     "role": role,
-                    "content": _user_content_to_response_content(content),
+                    "content": _ir_user_content_to_response_content(content),
                 }
             )
             continue
-
         if role == "assistant":
+            content_items = _ir_assistant_content_to_response_items(content)
             tool_calls = message.get("tool_calls")
             if isinstance(tool_calls, list) and tool_calls:
-                for tool_call in tool_calls:
+                if any(item.get("type") == "message" for item in content_items):
+                    raise ValueError(
+                        "Responses API cannot preserve mixed assistant text and tool calls"
+                    )
+                input_items.extend(content_items)
+                tc_list = cast(list[object], tool_calls)
+                for tool_call in tc_list:
                     if not isinstance(tool_call, dict):
                         continue
-                    function_payload = tool_call.get("function")
+                    tc = cast(dict[str, object], tool_call)
+                    function_payload = tc.get("function")
                     if not isinstance(function_payload, dict):
                         continue
-                    call_id = tool_call.get("id") or ""
-                    name = function_payload.get("name") or ""
-                    arguments = function_payload.get("arguments") or "{}"
+                    fn = cast(dict[str, object], function_payload)
+                    call_id = tc.get("id") or ""
+                    name = fn.get("name") or ""
+                    arguments = fn.get("arguments") or "{}"
                     if not call_id or not name:
                         continue
                     input_items.append(
@@ -205,169 +259,89 @@ def _messages_to_response_input(
                             "arguments": str(arguments),
                         }
                     )
-
-            text = "" if content is None else str(content)
-            if text:
-                input_items.append(
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [{"type": "output_text", "text": text}],
-                    }
+            else:
+                input_items.extend(content_items)
+            refusal = message.get("refusal")
+            if isinstance(refusal, str) and refusal:
+                raise ValueError(
+                    "Responses API cannot losslessly replay an assistant refusal"
                 )
             continue
-
         if role == "tool":
             tool_call_id = message.get("tool_call_id") or message.get("id") or ""
             output = "" if content is None else str(content)
             input_items.append(
                 {
                     "type": "function_call_output",
-                    "call_id": tool_call_id,
+                    "call_id": str(tool_call_id),
                     "output": output,
                 }
             )
     return input_items
 
 
-def _user_content_to_response_content(content: Any) -> list[dict[str, Any]]:
-    if isinstance(content, list):
-        converted: list[dict[str, Any]] = []
-        for part in content:
-            if not isinstance(part, dict):
-                converted.append({"type": "input_text", "text": str(part)})
-                continue
-
-            part_type = part.get("type")
-            if part_type == "text":
-                converted.append(
-                    {"type": "input_text", "text": str(part.get("text", ""))}
-                )
-                continue
-
-            if part_type == "image_url":
-                image_url = part.get("image_url")
-                if isinstance(image_url, dict):
-                    url = image_url.get("url")
-                    if isinstance(url, str) and url:
-                        image_part: dict[str, Any] = {
-                            "type": "input_image",
-                            "image_url": url,
-                            "detail": "auto",
-                        }
-                        detail = image_url.get("detail")
-                        if detail in {"low", "high", "auto"}:
-                            image_part["detail"] = detail
-                        converted.append(image_part)
-                        continue
-
-            converted.append({"type": "input_text", "text": str(part)})
-
-        return converted or [{"type": "input_text", "text": ""}]
-
-    text = "" if content is None else str(content)
-    return [{"type": "input_text", "text": text}]
-
-
-def _extract_response_instructions(
-    messages: Iterable[Dict[str, Any]],
+def _ir_messages_to_instructions(
+    messages: Iterable[dict[str, object]],
 ) -> Optional[str]:
     instructions: list[str] = []
     for message in messages:
         if message.get("role") != "system":
             continue
-
         content = message.get("content")
         if content is None:
             continue
-
         text = str(content)
         if text:
             instructions.append(text)
-
-    if not instructions:
-        return None
-
-    return "\n\n".join(instructions)
+    return "\n\n".join(instructions) if instructions else None
 
 
-def _tools_to_response_tools(
-    tools: Optional[Iterable[Dict[str, Any]]],
-) -> Optional[list[dict[str, Any]]]:
-    if not tools:
-        return None
-
-    response_tools: list[dict[str, Any]] = []
-    for tool in tools:
-        if not isinstance(tool, dict):
-            continue
-        if tool.get("type") != "function":
-            continue
-        function_spec = tool.get("function", {})
-        if not isinstance(function_spec, dict):
-            continue
-        response_tools.append(
-            {
-                "type": "function",
-                "name": function_spec.get("name", ""),
-                "description": function_spec.get("description"),
-                "parameters": _normalize_tool_parameters_for_responses(
-                    function_spec.get("parameters")
-                ),
-                "strict": True,
-            }
-        )
-
-    return response_tools or None
+# --- JSON Schema normalization for Responses tools --- #
 
 
-def _normalize_schema_for_responses(schema: Any) -> Any:
+def _normalize_schema_for_responses(schema: object) -> object:
+    """Recursively normalize a JSON Schema for the Responses API:
+    add ``additionalProperties: false`` to object schemas.
+    """
     if isinstance(schema, list):
-        return [_normalize_schema_for_responses(item) for item in schema]
-
+        items = cast(list[object], schema)
+        return [_normalize_schema_for_responses(item) for item in items]
     if not isinstance(schema, dict):
         return schema
-
-    normalized = {
-        key: _normalize_schema_for_responses(value) for key, value in schema.items()
+    src = cast(dict[str, object], schema)
+    normalized: dict[str, object] = {
+        key: _normalize_schema_for_responses(value) for key, value in src.items()
     }
-
     if "properties" in normalized and isinstance(normalized["properties"], dict):
         normalized["properties"] = {
             key: _normalize_schema_for_responses(value)
-            for key, value in normalized["properties"].items()
+            for key, value in cast(dict[str, object], normalized["properties"]).items()
         }
-
     schema_type = normalized.get("type")
     is_object_schema = (
         schema_type == "object"
-        or (isinstance(schema_type, list) and "object" in schema_type)
+        or (isinstance(schema_type, list) and "object" in cast(list[object], schema_type))
         or "properties" in normalized
     )
-
     if is_object_schema and "additionalProperties" not in normalized:
         normalized["additionalProperties"] = False
-
-    if "additionalProperties" in normalized and isinstance(
-        normalized["additionalProperties"], dict
-    ):
+    ap = normalized.get("additionalProperties")
+    if isinstance(ap, dict):
         normalized["additionalProperties"] = _normalize_schema_for_responses(
-            normalized["additionalProperties"]
+            cast(dict[str, object], ap)
         )
-
     return normalized
 
 
-def _convert_nullable_type_list_to_anyof(schema: dict[str, Any]) -> dict[str, Any]:
+def _convert_nullable_type_list_to_anyof(schema: dict[str, object]) -> dict[str, object]:
     schema_type = schema.get("type")
     if not isinstance(schema_type, list):
         return schema
-
-    non_null_types = [item for item in schema_type if item != "null"]
-    has_null = len(non_null_types) != len(schema_type)
+    type_list = cast(list[object], schema_type)
+    non_null_types = [item for item in type_list if item != "null"]
+    has_null = len(non_null_types) != len(type_list)
     if not has_null or not non_null_types:
         return schema
-
     converted = dict(schema)
     converted.pop("type", None)
     converted["anyOf"] = [{"type": value} for value in non_null_types] + [
@@ -376,40 +350,287 @@ def _convert_nullable_type_list_to_anyof(schema: dict[str, Any]) -> dict[str, An
     return converted
 
 
-def _normalize_tool_parameters_for_responses(parameters: Any) -> Any:
+def _normalize_tool_parameters_for_responses(parameters: object) -> object:
     normalized = _normalize_schema_for_responses(parameters)
     if not isinstance(normalized, dict):
         return normalized
-
-    properties = normalized.get("properties")
+    result = cast(dict[str, object], normalized)
+    properties = result.get("properties")
     if not isinstance(properties, dict):
-        return normalized
-
-    filtered_properties: dict[str, Any] = {}
-    for key, value in properties.items():
+        return result
+    props = cast(dict[str, object], properties)
+    filtered_properties: dict[str, object] = {}
+    for key, value in props.items():
         if key in _RESPONSES_TOOL_HIDDEN_PROPERTIES:
             continue
         if isinstance(value, dict):
-            filtered_properties[key] = _convert_nullable_type_list_to_anyof(value)
+            filtered_properties[key] = _convert_nullable_type_list_to_anyof(
+                cast(dict[str, object], value)
+            )
         else:
             filtered_properties[key] = value
+    result["properties"] = filtered_properties
+    result["required"] = list(filtered_properties.keys())
+    result["additionalProperties"] = False
+    return result
 
-    normalized["properties"] = filtered_properties
-    normalized["required"] = list(filtered_properties.keys())
-    normalized["additionalProperties"] = False
-    return normalized
 
-
-def _translate_tool_choice(tool_choice: Any) -> Any:
-    if tool_choice is None:
+def _ir_tools_to_response_tools(
+    tools: Optional[list[dict[str, object]]],
+) -> Optional[list[dict[str, object]]]:
+    if not tools:
         return None
-    if isinstance(tool_choice, str):
-        return tool_choice
-    if isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
-        function_spec = tool_choice.get("function", {})
-        if isinstance(function_spec, dict) and function_spec.get("name"):
-            return {"type": "function", "name": function_spec["name"]}
-    return tool_choice
+    response_tools: list[dict[str, object]] = []
+    for tool in tools:
+        if tool.get("type") != "function":
+            continue
+        function_spec = tool.get("function")
+        if not isinstance(function_spec, dict):
+            continue
+        fn = cast(dict[str, object], function_spec)
+        response_tools.append(
+            {
+                "type": "function",
+                "name": str(fn.get("name", "")),
+                "description": fn.get("description"),
+                "parameters": _normalize_tool_parameters_for_responses(
+                    fn.get("parameters")
+                ),
+                "strict": True,
+            }
+        )
+    return response_tools or None
+
+
+def _request_to_responses_kwargs(request: IRRequest) -> dict[str, Any]:
+    """Translate an IR :class:`Request` to ``client.responses.create`` kwargs
+    (excluding ``model`` / ``stream`` / ``timeout``).
+    """
+    messages_dump: list[dict[str, object]] = [
+        m.model_dump(mode="json") for m in request.messages
+    ]
+    kwargs: dict[str, Any] = {
+        "input": _ir_messages_to_response_input(messages_dump),
+    }
+    instructions = _ir_messages_to_instructions(messages_dump)
+    if instructions is not None:
+        kwargs["instructions"] = instructions
+    tools = _ir_tools_to_response_tools(
+        [t.model_dump(mode="json") for t in request.tools] if request.tools else None
+    )
+    if tools:
+        kwargs["tools"] = tools
+    if request.max_tokens is not None:
+        kwargs["max_output_tokens"] = request.max_tokens
+    if request.temperature is not None:
+        kwargs["temperature"] = request.temperature
+    if request.top_p is not None:
+        kwargs["top_p"] = request.top_p
+    if request.reasoning_effort is not None:
+        kwargs["reasoning"] = {"effort": request.reasoning_effort.value}
+    if request.extra:
+        for k, v in request.extra.items():
+            kwargs[k] = v
+    return kwargs
+
+
+# --------------------------------------------------------------------------- #
+# Responses wire format -> IR translation
+# --------------------------------------------------------------------------- #
+
+
+def _extract_response_output_text(response: Response) -> str:
+    fragments: list[str] = []
+    output: list[ResponseOutputItem] = getattr(response, "output", []) or []
+    unsupported = [
+        getattr(item, "type", None)
+        for item in output
+        if getattr(item, "type", None)
+        not in {"reasoning", "message", "function_call"}
+    ]
+    if unsupported:
+        raise ValueError(f"unsupported Responses output item types: {unsupported}")
+    for item in output:
+        if getattr(item, "type", None) != "message":
+            continue
+        contents: list[Any] = getattr(item, "content", []) or []
+        for content in contents:
+            if getattr(content, "type", None) == "output_text":
+                annotations = cast(
+                    list[object], getattr(content, "annotations", None) or []
+                )
+                if annotations:
+                    raise ValueError(
+                        "Responses output annotations cannot be represented losslessly"
+                    )
+                text = getattr(content, "text", None)
+                if isinstance(text, str) and text:
+                    fragments.append(text)
+    return "".join(fragments)
+
+
+def _extract_response_refusal(response: Response) -> str | None:
+    fragments: list[str] = []
+    output: list[ResponseOutputItem] = getattr(response, "output", []) or []
+    for item in output:
+        if getattr(item, "type", None) != "message":
+            continue
+        contents: list[Any] = getattr(item, "content", []) or []
+        for content in contents:
+            if getattr(content, "type", None) == "refusal":
+                refusal = getattr(content, "refusal", None)
+                if isinstance(refusal, str) and refusal:
+                    fragments.append(refusal)
+    return "".join(fragments) or None
+
+
+def _extract_response_reasoning_parts(response: Response) -> list[object]:
+    from SimpleLLMFunc.context.ir.parts import ReasoningPart
+
+    parts: list[object] = []
+    output: list[ResponseOutputItem] = getattr(response, "output", []) or []
+    for item in output:
+        if getattr(item, "type", None) != "reasoning":
+            continue
+        model_dump = getattr(item, "model_dump", None)
+        if not callable(model_dump):
+            raise ValueError("Responses reasoning item cannot be serialized")
+        payload = cast(dict[str, object], model_dump(mode="json", exclude_none=True))
+        signature = _RESPONSES_REASONING_SIGNATURE_PREFIX + json.dumps(
+            payload,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        parts.append(
+            ReasoningPart(reasoning=_reasoning_text(payload), signature=signature)
+        )
+    return parts
+
+
+def _extract_response_tool_calls(response: Response) -> list[ToolCall]:
+    tool_calls: list[ToolCall] = []
+    output: list[ResponseOutputItem] = getattr(response, "output", []) or []
+    for item in output:
+        if getattr(item, "type", None) != "function_call":
+            continue
+        tool_calls.append(
+            ToolCall(
+                id=getattr(item, "call_id", None) or getattr(item, "id", "") or "",
+                type=ToolCallType.FUNCTION,
+                function=ToolCallFunction(
+                    name=getattr(item, "name", "") or "",
+                    arguments=getattr(item, "arguments", "") or "{}",
+                ),
+            )
+        )
+    return tool_calls
+
+
+def _usage_from_response(response: Response) -> Optional[Usage]:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    prompt_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+    completion_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+    total_tokens = int(
+        getattr(usage, "total_tokens", prompt_tokens + completion_tokens)
+        or (prompt_tokens + completion_tokens)
+    )
+    reasoning_tokens: Optional[int] = None
+    details = getattr(usage, "output_tokens_details", None)
+    if details is not None:
+        rt = getattr(details, "reasoning_tokens", None)
+        if rt is not None:
+            reasoning_tokens = int(rt)
+    completion_tokens_details = (
+        CompletionTokensDetails(reasoning_tokens=reasoning_tokens)
+        if reasoning_tokens is not None
+        else None
+    )
+    return Usage(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
+        completion_tokens_details=completion_tokens_details,
+    )
+
+
+def _response_to_completion(response: Response) -> Completion:
+    status = getattr(response, "status", None)
+    incomplete_reason = None
+    if status == "incomplete":
+        details = getattr(response, "incomplete_details", None)
+        incomplete_reason = getattr(details, "reason", None)
+        if incomplete_reason not in ("max_output_tokens", "content_filter"):
+            raise RuntimeError(
+                f"Responses request ended incomplete for unsupported reason: "
+                f"{incomplete_reason}"
+            )
+    elif status not in (None, "completed"):
+        detail = getattr(response, "error", None) or getattr(
+            response, "incomplete_details", None
+        )
+        raise RuntimeError(f"Responses request ended with status {status}: {detail}")
+    output: list[ResponseOutputItem] = getattr(response, "output", []) or []
+    seen_non_reasoning = False
+    for item in output:
+        if getattr(item, "type", None) == "reasoning":
+            if seen_non_reasoning:
+                raise ValueError("Responses reasoning item order cannot be represented")
+        else:
+            seen_non_reasoning = True
+    if len([item for item in output if getattr(item, "type", None) == "message"]) > 1:
+        raise ValueError("multiple Responses output messages cannot be represented")
+
+    tool_calls = _extract_response_tool_calls(response)
+    reasoning_parts = _extract_response_reasoning_parts(response)
+    text = _extract_response_output_text(response)
+    refusal = _extract_response_refusal(response)
+    if tool_calls and (text or refusal):
+        raise ValueError(
+            "Responses output mixes text or refusal with function calls and cannot "
+            "be represented losslessly"
+        )
+    content_parts: list[object] = []
+    content_parts.extend(reasoning_parts)
+    if text:
+        content_parts.append({"type": "output_text", "text": text})
+    content_value: object = None
+    if content_parts:
+        content_value = content_parts
+    elif not tool_calls:
+        content_value = text or None
+
+    assistant = AssistantMessage(
+        content=content_value,  # type: ignore[arg-type]
+        tool_calls=tool_calls or None,
+        refusal=refusal,
+    )
+    if tool_calls:
+        finish_reason = FinishReason.TOOL_CALLS
+    elif incomplete_reason == "max_output_tokens":
+        finish_reason = FinishReason.LENGTH
+    elif incomplete_reason == "content_filter":
+        finish_reason = FinishReason.CONTENT_FILTER
+    else:
+        finish_reason = FinishReason.STOP
+    choice = CompletionChoice(
+        index=0,
+        message=assistant,
+        finish_reason=finish_reason,
+        logprobs=None,
+    )
+    return Completion(
+        id=getattr(response, "id", "") or "",
+        created=int(getattr(response, "created_at", 0) or 0),
+        model=getattr(response, "model", "") or "",
+        choices=[choice],
+        usage=_usage_from_response(response),
+    )
+
+
+# --- streaming chunk builders (IR) --- #
 
 
 def _make_text_chunk(
@@ -418,15 +639,20 @@ def _make_text_chunk(
     created: int,
     model: str,
     delta_text: str,
-) -> ChatCompletionChunk:
-    delta = ChoiceDelta(content=delta_text, role="assistant")
-    choice = ChunkChoice(delta=delta, finish_reason=None, index=0)
-    return ChatCompletionChunk(
+) -> Chunk:
+    return Chunk(
         id=response_id,
-        choices=[choice],
         created=created,
         model=model,
-        object="chat.completion.chunk",
+        choices=[
+            Choice(
+                index=0,
+                delta=Delta(role=Role.ASSISTANT, content=delta_text),
+                finish_reason=None,
+                logprobs=None,
+            )
+        ],
+        usage=None,
     )
 
 
@@ -436,24 +662,48 @@ def _make_reasoning_chunk(
     created: int,
     model: str,
     delta_text: str,
-) -> ChatCompletionChunk:
-    delta = ChoiceDelta(content=None, role="assistant")
-    delta.reasoning_details = [
-        {
-            "id": "",
-            "format": "text",
-            "index": 0,
-            "type": "reasoning.text",
-            "data": delta_text,
-        }
-    ]
-    choice = ChunkChoice(delta=delta, finish_reason=None, index=0)
-    return ChatCompletionChunk(
+    signature: str | None = None,
+) -> Chunk:
+    return Chunk(
         id=response_id,
-        choices=[choice],
         created=created,
         model=model,
-        object="chat.completion.chunk",
+        choices=[
+            Choice(
+                index=0,
+                delta=Delta(
+                    role=Role.ASSISTANT,
+                    reasoning=delta_text,
+                    reasoning_signature=signature,
+                ),
+                finish_reason=None,
+                logprobs=None,
+            )
+        ],
+        usage=None,
+    )
+
+
+def _make_refusal_chunk(
+    *,
+    response_id: str,
+    created: int,
+    model: str,
+    delta_text: str,
+) -> Chunk:
+    return Chunk(
+        id=response_id,
+        created=created,
+        model=model,
+        choices=[
+            Choice(
+                index=0,
+                delta=Delta(role=Role.ASSISTANT, refusal=delta_text),
+                finish_reason=None,
+                logprobs=None,
+            )
+        ],
+        usage=None,
     )
 
 
@@ -466,56 +716,105 @@ def _make_tool_call_chunk(
     tool_call_id: str,
     name: Optional[str],
     arguments_delta: str,
-) -> ChatCompletionChunk:
-    function = SimpleNamespace(name=name, arguments=arguments_delta)
-    tool_call = SimpleNamespace(
-        index=tool_call_index,
-        id=tool_call_id,
-        type="function",
-        function=function,
-    )
-    delta = ChoiceDelta(content=None, role="assistant")
-    delta.tool_calls = [tool_call]
-    choice = ChunkChoice(delta=delta, finish_reason=None, index=0)
-    return ChatCompletionChunk(
+) -> Chunk:
+    return Chunk(
         id=response_id,
-        choices=[choice],
         created=created,
         model=model,
-        object="chat.completion.chunk",
+        choices=[
+            Choice(
+                index=0,
+                delta=Delta(
+                    role=Role.ASSISTANT,
+                    tool_calls=[
+                        ToolCallDelta(
+                            index=tool_call_index,
+                            id=tool_call_id or None,
+                            type=ToolCallType.FUNCTION if tool_call_id else None,
+                            function=ToolCallDeltaFunction(
+                                name=name,
+                                arguments=arguments_delta or "",
+                            ),
+                        )
+                    ],
+                ),
+                finish_reason=None,
+                logprobs=None,
+            )
+        ],
+        usage=None,
     )
 
 
-def _make_finish_chunk(
-    *,
-    response: Response,
-) -> ChatCompletionChunk:
-    tool_calls = _extract_response_tool_calls(response)
-    finish_reason = "tool_calls" if tool_calls else "stop"
-    delta = ChoiceDelta(content=None, role="assistant")
-    choice = ChunkChoice(delta=delta, finish_reason=finish_reason, index=0)
-    return ChatCompletionChunk(
+def _make_finish_chunk(*, response: Response) -> Chunk:
+    completion = _response_to_completion(response)
+    finish_reason = completion.choices[0].finish_reason or FinishReason.STOP
+    return Chunk(
         id=getattr(response, "id", "") or "",
-        choices=[choice],
         created=int(getattr(response, "created_at", 0) or 0),
         model=getattr(response, "model", "") or "",
-        object="chat.completion.chunk",
-        usage=_extract_usage(response),
+        choices=[
+            Choice(
+                index=0,
+                delta=Delta(role=Role.ASSISTANT),
+                finish_reason=finish_reason,
+                logprobs=None,
+            )
+        ],
+        usage=completion.usage,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Provider config loader (typed)
+# --------------------------------------------------------------------------- #
+
+
+class _ProviderModelInfo:
+    """Typed view of a single model entry in the provider JSON config."""
+
+    model_name: str
+    api_keys: list[str]
+    base_url: str
+    context_window: int
+    max_retries: int
+    retry_delay: float
+    rate_limit_capacity: int
+    rate_limit_refill_rate: float
+
+    def __init__(self, raw: dict[str, Any]) -> None:
+        self.model_name = str(raw["model_name"])
+        self.api_keys = [str(k) for k in cast(list[Any], raw["api_keys"])]
+        self.base_url = str(raw["base_url"])
+        self.context_window = int(cast(int, raw.get("context_window", DEFAULT_CONTEXT_WINDOW)))
+        self.max_retries = int(cast(int, raw.get("max_retries", 5)))
+        self.retry_delay = float(cast(float, raw.get("retry_delay", 1.0)))
+        self.rate_limit_capacity = int(cast(int, raw.get("rate_limit_capacity", 10)))
+        self.rate_limit_refill_rate = float(cast(float, raw.get("rate_limit_refill_rate", 1.0)))
+
+
+# --------------------------------------------------------------------------- #
+# Adapter
+# --------------------------------------------------------------------------- #
 
 
 class OpenAIResponsesCompatible(LLM_Interface):
+    """OpenAI Responses API adapter.
+
+    Speaks the neutral context IR on its inner side, translating to/from the
+    Responses API wire format inline.
+    """
+
     def __repr__(self) -> str:
         return f"OpenAIResponsesCompatible(model_name={self.model_name}, base_url={self.base_url})"
 
     @classmethod
     def load_from_json_file(
         cls, json_path: str
-    ) -> Dict[str, Dict[str, "OpenAIResponsesCompatible"]]:
+    ) -> dict[str, dict[str, "OpenAIResponsesCompatible"]]:
         if not os.path.exists(json_path):
             push_critical(
                 f"JSON file {json_path} does not exist. Please check your configuration.",
-                location=get_location(),
             )
             raise FileNotFoundError(
                 f"JSON file {json_path} does not exist."
@@ -524,33 +823,38 @@ class OpenAIResponsesCompatible(LLM_Interface):
         with open(json_path, "r", encoding="utf-8") as f:
             payload = json.load(f)
 
-        all_providers_dict: Dict[str, Dict[str, OpenAIResponsesCompatible]] = {}
-        for provider_id, models in payload.items():
+        if not isinstance(payload, dict):
+            raise TypeError(
+                f"Top-level JSON must be an object, got {type(payload).__name__}"
+            )
+
+        raw_providers: dict[str, Any] = cast(dict[str, Any], payload)
+        all_providers_dict: dict[str, dict[str, OpenAIResponsesCompatible]] = {}
+        for provider_id, models in raw_providers.items():
             all_providers_dict[provider_id] = {}
             if not isinstance(models, list):
                 raise TypeError(
                     f"Invalid model format under provider {provider_id}. Expected a list."
                 )
-            for model_info in models:
-                model_name = model_info["model_name"]
-                key_pool = APIKeyPool(
-                    model_info["api_keys"], f"{provider_id}-{model_name}"
-                )
+            models_list: list[Any] = cast(list[Any], models)
+            for model_raw in models_list:
+                if not isinstance(model_raw, dict):
+                    raise TypeError(
+                        f"Invalid model entry under provider {provider_id}. Expected an object."
+                    )
+                info = _ProviderModelInfo(cast(dict[str, Any], model_raw))
+                key_pool = APIKeyPool(info.api_keys, f"{provider_id}-{info.model_name}")
                 instance = cls(
                     api_key_pool=key_pool,
-                    model_name=model_name,
-                    base_url=model_info["base_url"],
-                    context_window=model_info.get(
-                        "context_window", DEFAULT_CONTEXT_WINDOW
-                    ),
-                    max_retries=model_info.get("max_retries", 5),
-                    retry_delay=model_info.get("retry_delay", 1.0),
-                    rate_limit_capacity=model_info.get("rate_limit_capacity", 10),
-                    rate_limit_refill_rate=model_info.get(
-                        "rate_limit_refill_rate", 1.0
-                    ),
+                    model_name=info.model_name,
+                    base_url=info.base_url,
+                    context_window=info.context_window,
+                    max_retries=info.max_retries,
+                    retry_delay=info.retry_delay,
+                    rate_limit_capacity=info.rate_limit_capacity,
+                    rate_limit_refill_rate=info.rate_limit_refill_rate,
                 )
-                all_providers_dict[provider_id][model_name] = instance
+                all_providers_dict[provider_id][info.model_name] = instance
         return all_providers_dict
 
     def __init__(
@@ -563,7 +867,7 @@ class OpenAIResponsesCompatible(LLM_Interface):
         rate_limit_capacity: int = 10,
         rate_limit_refill_rate: float = 1.0,
         context_window: Optional[int] = DEFAULT_CONTEXT_WINDOW,
-    ):
+    ) -> None:
         super().__init__(
             api_key_pool,
             model_name,
@@ -581,40 +885,79 @@ class OpenAIResponsesCompatible(LLM_Interface):
             capacity=rate_limit_capacity,
             refill_rate=rate_limit_refill_rate,
         )
-        self.client = AsyncOpenAI(
-            api_key=api_key_pool.get_least_loaded_key(),
+        initial_key = api_key_pool.get_least_loaded_key()
+        self.client: Optional[AsyncOpenAI] = AsyncOpenAI(
+            api_key=initial_key,
             base_url=self.base_url,
         )
+        self._current_key = initial_key
+        self._clients: dict[str, AsyncOpenAI] = {initial_key: self.client}
 
-    async def _get_or_create_client(self, key: str) -> AsyncOpenAI:
-        if (
-            not hasattr(self, "_current_key")
-            or self._current_key != key  # type: ignore[attr-defined]
-            or not hasattr(self, "client")
-            or self.client is None
-        ):
-            if hasattr(self, "client") and self.client is not None:
-                try:
-                    await self.client.close()  # type: ignore[attr-defined]
-                except Exception:
-                    pass
-            self.client = AsyncOpenAI(api_key=key, base_url=self.base_url)
-            self._current_key = key
-        return self.client
+    async def _get_or_create_client(
+        self,
+        key: str,
+        cancellation: CancellationToken | None = None,
+    ) -> AsyncOpenAI:
+        if cancellation is not None and cancellation.cancelled:
+            raise asyncio.CancelledError
+        if self._current_key == key and self.client is not None:
+            self._clients[key] = self.client
+            return self.client
+        client = self._clients.get(key)
+        if client is None:
+            client = AsyncOpenAI(api_key=key, base_url=self.base_url)
+            self._clients[key] = client
+        self.client = client
+        self._current_key = key
+        return client
 
-    async def _close_stream_response(self, response: Any) -> None:
+    async def _close_stream_response(self, response: object) -> None:
         close_method = getattr(response, "close", None)
         if callable(close_method):
-            result = close_method()
-            if hasattr(result, "__await__"):
-                await result
+            try:
+                result = close_method()
+                if isawaitable(result):
+                    await cast(Awaitable[None], result)
+            except Exception as close_exc:
+                push_warning(
+                    f"{self.model_name} failed to close stream response: {close_exc}",
+                )
             return
-
         aclose_method = getattr(response, "aclose", None)
         if callable(aclose_method):
-            result = aclose_method()
-            if hasattr(result, "__await__"):
-                await result
+            try:
+                result = aclose_method()
+                if isawaitable(result):
+                    await cast(Awaitable[None], result)
+            except Exception as close_exc:
+                push_warning(
+                    f"{self.model_name} failed to close stream response: {close_exc}",
+                )
+
+    async def aclose(self) -> None:
+        """Close the underlying provider client."""
+
+        clients = tuple({id(client): client for client in self._clients.values()}.values())
+        closed: set[int] = set()
+        try:
+            for client in clients:
+                try:
+                    await client.close()
+                except Exception:
+                    continue
+                closed.add(id(client))
+        finally:
+            self._clients = {
+                key: client
+                for key, client in self._clients.items()
+                if id(client) not in closed
+            }
+            if self.client is not None and id(self.client) in closed:
+                replacement = next(iter(self._clients.items()), None)
+                if replacement is None:
+                    self.client = None
+                else:
+                    self._current_key, self.client = replacement
 
     def _count_tokens(self, response: Response) -> tuple[int, int]:
         usage = getattr(response, "usage", None)
@@ -624,31 +967,6 @@ class OpenAIResponsesCompatible(LLM_Interface):
             int(getattr(usage, "input_tokens", 0) or 0),
             int(getattr(usage, "output_tokens", 0) or 0),
         )
-
-    def _build_request_kwargs(
-        self,
-        *,
-        messages: Iterable[Dict[str, Any]],
-        kwargs: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        request_kwargs = dict(kwargs)
-        for unsupported_key in _RESPONSES_UNSUPPORTED_REQUEST_KWARGS:
-            request_kwargs.pop(unsupported_key, None)
-        request_kwargs["input"] = _messages_to_response_input(messages)
-        instructions = _extract_response_instructions(messages)
-        if instructions is not None:
-            request_kwargs["instructions"] = instructions
-        tools = _tools_to_response_tools(
-            cast(Optional[Iterable[Dict[str, Any]]], request_kwargs.pop("tools", None))
-        )
-        if tools:
-            request_kwargs["tools"] = tools
-
-        tool_choice = _translate_tool_choice(request_kwargs.get("tool_choice"))
-        if tool_choice is not None:
-            request_kwargs["tool_choice"] = tool_choice
-
-        return request_kwargs
 
     def _apply_usage_to_context(self, response: Response) -> None:
         prompt_tokens, completion_tokens = self._count_tokens(response)
@@ -662,113 +980,126 @@ class OpenAIResponsesCompatible(LLM_Interface):
     @override
     async def chat(
         self,
-        trace_id: str = get_current_trace_id(),
-        stream: Literal[False] = False,
-        messages: Iterable[Dict[str, str]] = [{"role": "user", "content": ""}],
+        request: IRRequest,
+        *,
+        trace_id: Optional[str] = None,
         timeout: Optional[int] = 30,
-        *args: Any,
-        **kwargs: Any,
-    ) -> ChatCompletion:
-        _ = trace_id, args
+        cancellation: CancellationToken | None = None,
+    ) -> Completion:
+        _ = trace_id or get_current_trace_id()
+        if cancellation is not None and cancellation.cancelled:
+            raise asyncio.CancelledError
         key = self.key_pool.get_least_loaded_key()
-        client = await self._get_or_create_client(key)
+        client = await self._get_or_create_client(key, cancellation)
 
         attempt = 0
+        task_counted = False
         while attempt < self.max_retries:
             try:
-                token_acquired = await self.token_bucket.acquire(
-                    tokens_needed=1, timeout=30.0
+                token_acquired = await await_with_cancellation(
+                    lambda: self.token_bucket.acquire(
+                        tokens_needed=1,
+                        timeout=30.0,
+                    ),
+                    cancellation,
                 )
                 if not token_acquired:
                     raise Exception("Rate limit: token bucket acquire timed out")
 
                 self.key_pool.increment_task_count(key)
-                data = json.dumps(list(messages), ensure_ascii=False, indent=4)
+                task_counted = True
                 push_debug(
-                    f"OpenAIResponsesCompatible::chat: {self.model_name} request with API key: {key}, and message: {data}",
-                    location=get_location(),
+                    f"OpenAIResponsesCompatible::chat: model={self.model_name} "
+                    f"message_count={len(request.messages)}",
                 )
-                request_kwargs = self._build_request_kwargs(
-                    messages=messages, kwargs=kwargs
+                request_kwargs = _request_to_responses_kwargs(request)
+                response = await await_with_cancellation(
+                    lambda: client.responses.create(
+                        model=self.model_name,
+                        stream=False,
+                        timeout=timeout,
+                        **request_kwargs,
+                    ),
+                    cancellation,
                 )
-                response = await client.responses.create(
-                    model=self.model_name,
-                    stream=stream,
-                    timeout=timeout,
-                    *args,
-                    **request_kwargs,
-                )
-                response = cast(Response, response)
                 self._apply_usage_to_context(response)
+                completion = _response_to_completion(response)
                 self.key_pool.decrement_task_count(key)
-                return _response_to_chat_completion(response)
-            except Exception as exc:
-                self.key_pool.decrement_task_count(key)
+                task_counted = False
+                return completion
+            except BaseException as exc:
+                if task_counted:
+                    self.key_pool.decrement_task_count(key)
+                    task_counted = False
+                if not isinstance(exc, Exception):
+                    raise
                 attempt += 1
-                data = json.dumps(list(messages), ensure_ascii=False, indent=4)
                 push_warning(
-                    f"{self.model_name} Responses interface attempt {attempt} failed: With message : {data} send, \n but exception : {str(exc)} was caught",
-                    location=get_location(),
+                    f"{self.model_name} Responses interface attempt {attempt} "
+                    f"failed for message_count={len(request.messages)}: {exc}",
                 )
                 key = self.key_pool.get_least_loaded_key()
-                client = await self._get_or_create_client(key)
+                client = await self._get_or_create_client(key, cancellation)
                 if attempt >= self.max_retries:
                     push_error(
-                        f"Max retries reached. {self.model_name} Failed to get a response for {data}",
-                        location=get_location(),
+                        f"Max retries reached for {self.model_name} "
+                        f"message_count={len(request.messages)}",
                     )
                     raise
-                await asyncio.sleep(self.retry_delay)
+                await await_with_cancellation(
+                    lambda: asyncio.sleep(self.retry_delay),
+                    cancellation,
+                )
 
-        return ChatCompletion(
-            id="",
-            choices=[],
-            created=0,
-            model="",
-            object="chat.completion",
-            usage=None,
-        )
+        return Completion(id="", created=0, model="", choices=[])
 
     @override
     async def chat_stream(
         self,
-        trace_id: str = get_current_trace_id(),
-        stream: Literal[True] = True,
-        messages: Iterable[Dict[str, str]] = [{"role": "user", "content": ""}],
+        request: IRRequest,
+        *,
+        trace_id: Optional[str] = None,
         timeout: Optional[int] = 30,
-        *args: Any,
-        **kwargs: Any,
-    ) -> AsyncGenerator[ChatCompletionChunk, None]:
-        _ = trace_id, args
+        cancellation: CancellationToken | None = None,
+    ) -> AsyncGenerator[Chunk, None]:
+        _ = trace_id or get_current_trace_id()
+        if cancellation is not None and cancellation.cancelled:
+            raise asyncio.CancelledError
         key = self.key_pool.get_least_loaded_key()
-        client = await self._get_or_create_client(key)
+        client = await self._get_or_create_client(key, cancellation)
 
         attempt = 0
+        task_counted = False
+        yielded_output = False
         while attempt < self.max_retries:
+            yielded_output = False
             try:
-                token_acquired = await self.token_bucket.acquire(
-                    tokens_needed=1, timeout=30.0
+                token_acquired = await await_with_cancellation(
+                    lambda: self.token_bucket.acquire(
+                        tokens_needed=1,
+                        timeout=30.0,
+                    ),
+                    cancellation,
                 )
                 if not token_acquired:
                     raise Exception("Rate limit: 令牌桶获取令牌超时")
 
                 self.key_pool.increment_task_count(key)
-                data = json.dumps(list(messages), ensure_ascii=False, indent=4)
+                task_counted = True
                 push_debug(
-                    f"OpenAIResponsesCompatible::chat_stream: {self.model_name} request with API key: {key}, and message: {data}",
-                    location=get_location(),
+                    f"OpenAIResponsesCompatible::chat_stream: model={self.model_name} "
+                    f"message_count={len(request.messages)}",
                 )
-                request_kwargs = self._build_request_kwargs(
-                    messages=messages, kwargs=kwargs
+                request_kwargs = _request_to_responses_kwargs(request)
+                response_stream = await await_with_cancellation(
+                    lambda: client.responses.create(
+                        model=self.model_name,
+                        stream=True,
+                        timeout=timeout,
+                        **request_kwargs,
+                    ),
+                    cancellation,
                 )
-                response_stream = await client.responses.create(
-                    model=self.model_name,
-                    stream=stream,
-                    timeout=timeout,
-                    *args,
-                    **request_kwargs,
-                )
-
                 response_stream = cast(
                     AsyncGenerator[ResponseStreamEvent, None], response_stream
                 )
@@ -776,31 +1107,38 @@ class OpenAIResponsesCompatible(LLM_Interface):
                 current_response_id = ""
                 current_created = 0
                 current_model = self.model_name
-                tool_call_contexts_by_item_id: dict[str, dict[str, Any]] = {}
-                tool_call_contexts_by_output_index: dict[int, dict[str, Any]] = {}
-                completed_response: Optional[Response] = None
+                tool_call_contexts_by_item_id: dict[str, dict[str, object]] = {}
+                tool_call_contexts_by_output_index: dict[int, dict[str, object]] = {}
+                next_tool_call_index = 0
+                terminal_received = False
 
                 try:
-                    async for event in response_stream:
+                    response_iter = response_stream.__aiter__()
+                    while True:
+                        try:
+                            event = await await_with_cancellation(
+                                response_iter.__anext__,
+                                cancellation,
+                            )
+                        except StopAsyncIteration:
+                            break
                         event_type = getattr(event, "type", "")
                         if event_type == "response.created":
                             response_obj = getattr(event, "response", None)
                             if response_obj is not None:
-                                current_response_id = (
-                                    getattr(response_obj, "id", "")
-                                    or current_response_id
-                                )
-                                current_created = int(
-                                    getattr(response_obj, "created_at", 0)
-                                    or current_created
-                                )
-                                current_model = (
-                                    getattr(response_obj, "model", current_model)
-                                    or current_model
-                                )
+                                rid = getattr(response_obj, "id", "") or ""
+                                if rid:
+                                    current_response_id = rid
+                                ca = getattr(response_obj, "created_at", 0) or 0
+                                if ca:
+                                    current_created = int(ca)
+                                m = getattr(response_obj, "model", "") or ""
+                                if m:
+                                    current_model = m
                             continue
 
                         if event_type == "response.output_text.delta":
+                            yielded_output = True
                             yield _make_text_chunk(
                                 response_id=current_response_id,
                                 created=current_created,
@@ -809,11 +1147,22 @@ class OpenAIResponsesCompatible(LLM_Interface):
                             )
                             continue
 
-                        if event_type in {
+                        if event_type in (
                             "response.reasoning_text.delta",
                             "response.reasoning_summary_text.delta",
-                        }:
+                        ):
+                            yielded_output = True
                             yield _make_reasoning_chunk(
+                                response_id=current_response_id,
+                                created=current_created,
+                                model=current_model,
+                                delta_text=getattr(event, "delta", "") or "",
+                            )
+                            continue
+
+                        if event_type == "response.refusal.delta":
+                            yielded_output = True
+                            yield _make_refusal_chunk(
                                 response_id=current_response_id,
                                 created=current_created,
                                 model=current_model,
@@ -831,8 +1180,8 @@ class OpenAIResponsesCompatible(LLM_Interface):
                                     if isinstance(output_index_raw, int)
                                     else len(tool_call_contexts_by_output_index)
                                 )
-                                context = {
-                                    "index": output_index,
+                                context: dict[str, object] = {
+                                    "index": next_tool_call_index,
                                     "tool_call_id": (
                                         getattr(item, "call_id", "")
                                         or getattr(item, "id", "")
@@ -842,15 +1191,24 @@ class OpenAIResponsesCompatible(LLM_Interface):
                                 }
                                 if item_id:
                                     tool_call_contexts_by_item_id[item_id] = context
-                                tool_call_contexts_by_output_index[output_index] = (
-                                    context
+                                tool_call_contexts_by_output_index[output_index] = context
+                                next_tool_call_index += 1
+                                yielded_output = True
+                                yield _make_tool_call_chunk(
+                                    response_id=current_response_id,
+                                    created=current_created,
+                                    model=current_model,
+                                    tool_call_index=cast(int, context["index"]),
+                                    tool_call_id=cast(str, context["tool_call_id"]),
+                                    name=cast(Optional[str], context["name"]),
+                                    arguments_delta="",
                                 )
                             continue
 
                         if event_type == "response.function_call_arguments.delta":
                             event_item_id = getattr(event, "item_id", "") or ""
                             event_output_index = getattr(event, "output_index", None)
-                            tool_call_context = None
+                            tool_call_context: Optional[dict[str, object]] = None
                             if event_item_id:
                                 tool_call_context = tool_call_contexts_by_item_id.get(
                                     event_item_id
@@ -864,67 +1222,175 @@ class OpenAIResponsesCompatible(LLM_Interface):
                                     )
                                 )
                             if tool_call_context is None:
-                                fallback_index = (
-                                    event_output_index
-                                    if isinstance(event_output_index, int)
-                                    else 0
-                                )
                                 tool_call_context = {
-                                    "index": fallback_index,
+                                    "index": next_tool_call_index,
                                     "tool_call_id": event_item_id,
                                     "name": None,
                                 }
+                                next_tool_call_index += 1
+                            idx = cast(int, tool_call_context.get("index"))
+                            tcid = cast(str, tool_call_context.get("tool_call_id", "") or "")
+                            tname = cast(Optional[str], tool_call_context.get("name", None))
+                            delta = getattr(event, "delta", "") or ""
+                            emitted = cast(
+                                str, tool_call_context.get("arguments_emitted", "")
+                            )
+                            tool_call_context["arguments_emitted"] = emitted + delta
+                            yielded_output = True
                             yield _make_tool_call_chunk(
                                 response_id=current_response_id,
                                 created=current_created,
                                 model=current_model,
-                                tool_call_index=int(tool_call_context["index"]),
-                                tool_call_id=str(
-                                    tool_call_context.get("tool_call_id", "") or ""
-                                ),
-                                name=cast(
-                                    Optional[str], tool_call_context.get("name", None)
-                                ),
-                                arguments_delta=getattr(event, "delta", "") or "",
+                                tool_call_index=idx,
+                                tool_call_id=tcid,
+                                name=tname,
+                                arguments_delta=delta,
                             )
                             continue
 
-                        if event_type == "response.completed":
-                            completed_response = cast(
-                                Optional[Response], getattr(event, "response", None)
+                        if event_type == "response.function_call_arguments.done":
+                            event_item_id = getattr(event, "item_id", "") or ""
+                            event_output_index = getattr(event, "output_index", None)
+                            call_context: dict[str, object] | None = (
+                                tool_call_contexts_by_item_id.get(event_item_id)
+                                if event_item_id
+                                else None
                             )
+                            if call_context is None and isinstance(event_output_index, int):
+                                call_context = tool_call_contexts_by_output_index.get(
+                                    event_output_index
+                                )
+                            if call_context is None:
+                                raise RuntimeError(
+                                    "Responses tool-call completion has no context"
+                                )
+                            arguments = getattr(event, "arguments", "") or ""
+                            emitted = cast(
+                                str, call_context.get("arguments_emitted", "")
+                            )
+                            if not arguments.startswith(emitted):
+                                raise RuntimeError(
+                                    "Responses tool-call arguments are not cumulative"
+                                )
+                            suffix = arguments[len(emitted) :]
+                            call_context["arguments_emitted"] = arguments
+                            if suffix:
+                                yielded_output = True
+                                yield _make_tool_call_chunk(
+                                    response_id=current_response_id,
+                                    created=current_created,
+                                    model=current_model,
+                                    tool_call_index=cast(int, call_context["index"]),
+                                    tool_call_id=cast(
+                                        str, call_context["tool_call_id"]
+                                    ),
+                                    name=cast(Optional[str], call_context["name"]),
+                                    arguments_delta=suffix,
+                                )
+                            continue
+
+                        if event_type == "response.output_item.done":
+                            item = getattr(event, "item", None)
+                            if getattr(item, "type", None) == "reasoning":
+                                model_dump = getattr(item, "model_dump", None)
+                                if not callable(model_dump):
+                                    raise RuntimeError(
+                                        "Responses reasoning item cannot be serialized"
+                                    )
+                                payload = cast(
+                                    dict[str, object],
+                                    model_dump(mode="json", exclude_none=True),
+                                )
+                                signature = (
+                                    _RESPONSES_REASONING_SIGNATURE_PREFIX
+                                    + json.dumps(
+                                        payload,
+                                        ensure_ascii=True,
+                                        separators=(",", ":"),
+                                        sort_keys=True,
+                                    )
+                                )
+                                yielded_output = True
+                                yield _make_reasoning_chunk(
+                                    response_id=current_response_id,
+                                    created=current_created,
+                                    model=current_model,
+                                    delta_text="",
+                                    signature=signature,
+                                )
+                            continue
+
+                        if event_type == "response.completed":
+                            completed_response = getattr(event, "response", None)
                             if completed_response is not None:
-                                self._apply_usage_to_context(completed_response)
-                                yield _make_finish_chunk(response=completed_response)
+                                cr = cast(Response, completed_response)
+                                self._apply_usage_to_context(cr)
+                                terminal_received = True
+                                yield _make_finish_chunk(response=cr)
                             break
+
+                        if event_type == "response.incomplete":
+                            terminal_response = getattr(event, "response", None)
+                            reason = getattr(
+                                getattr(terminal_response, "incomplete_details", None),
+                                "reason",
+                                None,
+                            )
+                            if reason not in ("max_output_tokens", "content_filter"):
+                                raise RuntimeError(
+                                    "Responses stream ended incomplete for "
+                                    f"unsupported reason: {reason}"
+                                )
+                            if terminal_response is None:
+                                raise RuntimeError(
+                                    "Responses incomplete event has no response"
+                                )
+                            terminal_received = True
+                            yield _make_finish_chunk(response=cast(Response, terminal_response))
+                            break
+
+                        if event_type == "response.failed":
+                            terminal_response = getattr(event, "response", None)
+                            status = getattr(terminal_response, "status", event_type)
+                            detail = getattr(terminal_response, "error", None)
+                            raise RuntimeError(
+                                f"Responses stream ended with status {status}: {detail}"
+                            )
+                    if not terminal_received:
+                        raise RuntimeError(
+                            "Responses stream ended without a terminal event"
+                        )
                 finally:
                     await self._close_stream_response(response_stream)
 
                 self.key_pool.decrement_task_count(key)
+                task_counted = False
                 break
-            except Exception as exc:
-                self.key_pool.decrement_task_count(key)
+            except BaseException as exc:
+                if task_counted:
+                    self.key_pool.decrement_task_count(key)
+                    task_counted = False
+                if not isinstance(exc, Exception):
+                    raise
+                if yielded_output:
+                    raise
                 attempt += 1
-                data = json.dumps(list(messages), ensure_ascii=False, indent=4)
                 push_warning(
-                    f"{self.model_name} Responses interface attempt {attempt} failed: With message : {data} send, \n but exception : {str(exc)} was caught",
-                    location=get_location(),
+                    f"{self.model_name} Responses interface attempt {attempt} "
+                    f"failed for message_count={len(request.messages)}: {exc}",
                 )
                 key = self.key_pool.get_least_loaded_key()
-                client = await self._get_or_create_client(key)
+                client = await self._get_or_create_client(key, cancellation)
                 if attempt >= self.max_retries:
                     push_error(
-                        f"Max retries reached. {self.model_name} Failed to get a response for {data}",
-                        location=get_location(),
+                        f"Max retries reached for {self.model_name} "
+                        f"message_count={len(request.messages)}",
                     )
                     raise
-                await asyncio.sleep(self.retry_delay)
+                await await_with_cancellation(
+                    lambda: asyncio.sleep(self.retry_delay),
+                    cancellation,
+                )
 
         if False:
-            yield ChatCompletionChunk(
-                id="",
-                choices=[],
-                created=0,
-                model="",
-                object="chat.completion.chunk",
-            )
+            yield Chunk(id="", created=0, model="", choices=[])
